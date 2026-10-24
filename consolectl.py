@@ -214,23 +214,28 @@ def _win_size(info):
     return w.Right - w.Left + 1, w.Bottom - w.Top + 1
 
 
-def _wait_window(hout, cols, rows, timeout=1.5):
-    """SetConsoleWindowInfo diterapkan asinkron oleh conhost; tunggu sampai ukuran window benar-benar berubah."""
-    end = time.time() + timeout
-    info = CSBI()
-    while True:
-        k32.GetConsoleScreenBufferInfo(hout, ctypes.byref(info))
-        if _win_size(info) == (cols, rows):
-            return info
-        if time.time() > end:
-            return None
-        time.sleep(0.02)
+u32 = ctypes.WinDLL("user32", use_last_error=True)
+u32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
+u32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
+k32.GetConsoleWindow.restype = wt.HWND
+
+
+class _CFI(ctypes.Structure):
+    _fields_ = [("nFont", wt.DWORD), ("dwFontSize", COORD)]
+
+
+k32.GetCurrentConsoleFont.argtypes = [wt.HANDLE, wt.BOOL, ctypes.POINTER(_CFI)]
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE = 0x1, 0x2, 0x4, 0x10
 
 
 def resize(pid, cols, rows):
-    """Ubah ukuran jendela console ke cols x rows (dibatasi ukuran terbesar yang muat di layar PC).
-    Urutan aman: kecilkan window dulu bila perlu (dan tunggu benar-benar mengecil), ubah buffer (lebar = lebar
-    window, tinggi tidak dikurangi agar scrollback aman), lalu set window. Hasil: ukuran aktual + ukuran sebelumnya."""
+    """Ubah ukuran jendela console ke cols x rows karakter (dibatasi ukuran terbesar yang muat di layar PC).
+
+    SetConsoleWindowInfo hanya bisa MEMPERBESAR (memperkecil diabaikan tanpa error), jadi yang dipakai adalah
+    SetWindowPos pada HWND console dengan loop koreksi: selisih sel x ukuran font = selisih piksel, lalu dibaca ulang
+    karena conhost menerapkannya secara asinkron. Buffer diperbesar dulu bila perlu; lebar buffer akhirnya disamakan
+    dengan window (tanpa scrollbar horizontal). Console yang tak punya jendela sungguhan (Windows Terminal/ConPTY)
+    tidak bisa diubah dari sini."""
     with _Attached(pid) as c:
         info = CSBI()
         if not k32.GetConsoleScreenBufferInfo(c.hout, ctypes.byref(info)):
@@ -238,32 +243,37 @@ def resize(pid, cols, rows):
         largest = k32.GetLargestConsoleWindowSize(c.hout)
         cols = max(20, min(int(cols), largest.X or int(cols)))
         rows = max(8, min(int(rows), largest.Y or int(rows)))
-        cur_w, cur_h = _win_size(info)
-        before = (cur_w, cur_h)
-        if (cols, rows) == before and info.dwSize.X == cols:
+        before = _win_size(info)
+        if before == (cols, rows):
             return {"cols": cols, "rows": rows, "before": before, "changed": False}
-        w = info.srWindow
-        if cols < cur_w or rows < cur_h:        # buffer tidak boleh lebih kecil dari window -> kecilkan window dulu
-            nw, nh = min(cols, cur_w), min(rows, cur_h)
-            r = SMALL_RECT(w.Left, w.Top, w.Left + nw - 1, w.Top + nh - 1)
-            k32.SetConsoleWindowInfo(c.hout, True, ctypes.byref(r))
-            if _wait_window(c.hout, nw, nh) is None:
-                raise ConsoleError("window tidak mengecil (timeout)")
-        buf_h = max(info.dwSize.Y, rows)
-        if not k32.SetConsoleScreenBufferSize(c.hout, COORD(cols, buf_h)):
-            raise ConsoleError(f"SetConsoleScreenBufferSize gagal (error {ctypes.get_last_error()})")
-        info2 = CSBI()
-        k32.GetConsoleScreenBufferInfo(c.hout, ctypes.byref(info2))
-        top = max(0, min(info2.srWindow.Top, info2.dwSize.Y - rows))
-        cy = info2.dwCursorPosition.Y             # pastikan kursor (prompt) tetap terlihat
-        if cy < top or cy > top + rows - 1:
-            top = max(0, min(cy - rows + 2, info2.dwSize.Y - rows))
-        r = SMALL_RECT(0, top, cols - 1, top + rows - 1)
-        if not k32.SetConsoleWindowInfo(c.hout, True, ctypes.byref(r)):
-            raise ConsoleError(f"SetConsoleWindowInfo gagal (error {ctypes.get_last_error()})")
-        info3 = _wait_window(c.hout, cols, rows)
-        if info3 is None:
-            info3 = CSBI()
-            k32.GetConsoleScreenBufferInfo(c.hout, ctypes.byref(info3))
-        aw, ah = _win_size(info3)
-        return {"cols": aw, "rows": ah, "before": before, "changed": True}
+        hwnd = k32.GetConsoleWindow()
+        if not hwnd:
+            raise ConsoleError("console tidak punya jendela sendiri (mungkin Windows Terminal): ukuran mengikuti jendela terminal itu")
+        f = _CFI()
+        k32.GetCurrentConsoleFont(c.hout, False, ctypes.byref(f))
+        fw, fh = (f.dwFontSize.X or 8), (f.dwFontSize.Y or 16)
+        if cols > info.dwSize.X or rows > info.dwSize.Y:      # window tak boleh lebih besar dari buffer
+            k32.SetConsoleScreenBufferSize(c.hout, COORD(max(cols, info.dwSize.X), max(rows, info.dwSize.Y)))
+        cur = before
+        for _ in range(8):
+            cur_info = CSBI()
+            k32.GetConsoleScreenBufferInfo(c.hout, ctypes.byref(cur_info))
+            cur = _win_size(cur_info)
+            if cur == (cols, rows):
+                break
+            rc = wt.RECT()
+            u32.GetWindowRect(hwnd, ctypes.byref(rc))
+            w = max(1, (rc.right - rc.left) + (cols - cur[0]) * fw)
+            h = max(1, (rc.bottom - rc.top) + (rows - cur[1]) * fh)
+            u32.SetWindowPos(hwnd, None, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
+            time.sleep(0.15)
+        fin = CSBI()
+        k32.GetConsoleScreenBufferInfo(c.hout, ctypes.byref(fin))
+        cur = _win_size(fin)
+        if fin.dwSize.X != cur[0]:                            # buang scrollbar horizontal
+            k32.SetConsoleScreenBufferSize(c.hout, COORD(cur[0], max(fin.dwSize.Y, cur[1])))
+            k32.GetConsoleScreenBufferInfo(c.hout, ctypes.byref(fin))
+            cur = _win_size(fin)
+        if cur == before:
+            raise ConsoleError("ukuran jendela tidak berubah (jendela dimaksimalkan / dikunci?)")
+        return {"cols": cur[0], "rows": cur[1], "before": before, "changed": True}

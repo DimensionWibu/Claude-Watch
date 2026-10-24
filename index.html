@@ -95,6 +95,9 @@ main { flex: 1; min-height: 0; padding: 0 16px 12px; display: flex; flex-directi
 .chips { margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 10px; font: 11px var(--mono); color: var(--muted); }
 .chips b { color: var(--text); font-weight: 600; }
 .toast { position: fixed; right: 20px; bottom: 20px; padding: 6px 12px; background: var(--accent); color: #fff; border: 0; border-radius: 16px; cursor: pointer; display: none; }
+/* tab Terminal: beri tinggi sebanyak mungkin untuk layar (statistik & keterangan banner disembunyikan) */
+body[data-tab="term"] #cards, body[data-tab="term"] #banner .sub { display: none; }
+body[data-tab="term"] #banner { padding: 6px 14px; margin-top: 8px; } body[data-tab="term"] #banner .big, body[data-tab="term"] #banner .timer { font-size: 15px; }
 /* ---- tab, chat, terminal (mode remote) ---- */
 .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel[hidden] { display: none; }
@@ -144,6 +147,9 @@ button.act.warn { background: var(--warn); color: #fff; }
 #raw:disabled { opacity: .6; }
 #rawform .rawopts { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .kbbar { border-bottom: 1px solid var(--line); }
+.kbbar button { padding: 3px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.kbbar button:hover:not(:disabled) { border-color: var(--accent); }
+#screen.fit { overflow: hidden; }
 .kbstate { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 10px; background: var(--idle-bg); color: var(--idle); }
 .kbstate.on { background: var(--ok-bg); color: var(--ok); }
 .kbhelp { font-size: 11.5px; }
@@ -158,6 +164,14 @@ button.act.warn { background: var(--warn); color: #fff; }
 @media (pointer: coarse) { .termkeys button { padding: 10px 14px; font-size: 14px; min-width: 44px; } .kbhelp { display: none; } }
 #termMeta { margin-left: auto; color: var(--muted); font-size: 11px; }
 @media (max-width: 640px) {
+  /* tab Terminal di HP: buang yang tidak perlu supaya layar (kolom x baris) sebesar mungkin */
+  body[data-tab="term"] header .actions, body[data-tab="term"] header label.chk, body[data-tab="term"] #lineage,
+  body[data-tab="term"] #banner, body[data-tab="term"] .kbhelp { display: none; }
+  body[data-tab="term"] header { padding: 6px 12px; } body[data-tab="term"] #tabs { padding-top: 6px; }
+  body[data-tab="term"] .termkeys { flex-wrap: nowrap; overflow-x: auto; padding: 6px 8px; }
+  body[data-tab="term"] .termkeys button { flex: none; } body[data-tab="term"] #termMeta { display: none; }
+  body[data-tab="term"] .kbbar { padding: 4px 10px; }
+  body[data-tab="term"] #raw { min-height: 44px; font-size: 13px; } body[data-tab="term"] #rawform { padding: 6px 8px; }
   body[data-tab="chat"] #cards, body[data-tab="term"] #cards { display: none; }   /* beri ruang untuk chat/terminal */
   body[data-tab="chat"] #banner .sub, body[data-tab="term"] #banner .sub { display: none; }
   .box { margin: 0 8px 8px; } #tabs { padding: 8px 8px 0; } #composer { flex-wrap: wrap; } .cbtns { flex-direction: row; }
@@ -273,6 +287,9 @@ button.act.warn { background: var(--warn); color: #fff; }
     <div class="tools kbbar">
       <label class="chk" title="Tombol keyboard langsung diteruskan ke terminal tanpa klik"><input type="checkbox" id="liveKb" checked> ⌨ Keyboard langsung</label>
       <span id="kbState" class="kbstate"></span>
+      <label class="chk" title="Ukur area terminal ini lalu ubah ukuran jendela cmd di PC supaya pas (kolom x baris)"><input type="checkbox" id="autoFit" checked> ⤢ Auto-fit ukuran</label>
+      <button type="button" id="fitNow" title="Sesuaikan ukuran jendela cmd di PC dengan area ini sekarang">Fit sekarang</button>
+      <button type="button" id="fitReset" title="Kembalikan ukuran jendela cmd di PC seperti semula (auto-fit dimatikan)">↺ Ukuran asli</button>
       <span class="kbhelp">Ketik / Esc / panah / Tab / ⇧Tab / Ctrl+C·O langsung diteruskan · Ctrl+V tempel · Alt+1/2/3 ganti tab · di HP ketuk layar untuk membuka keyboard</span>
     </div>
     <div id="startBox" class="startbox" hidden>
@@ -634,6 +651,7 @@ function renderLive() {
   else { chip.textContent = "● LIVE · " + (L.status || "?") + " · pid " + L.pid; chip.className = "pill " + (L.status === "busy" ? "live-busy" : "live-on"); chip.title = "Proses claude hidup, bisa dikontrol"; }
   const show = !!curSid && !L;                      // sesi tidak hidup: ganti layar dengan panel Start
   $("startBox").hidden = !show; $("screen").hidden = show;
+  if (!show) applyFitSoon(600);
   renderComposer();
 }
 function renderComposer() {
@@ -905,6 +923,59 @@ $("raw").addEventListener("keydown", (e) => {   // Enter kirim, Shift+Enter bari
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("rawform").requestSubmit(); }
 });
 
+// ---- auto-fit: ukur area terminal di web (kolom x baris) lalu minta console di PC mengikuti ----
+let autoFit = store.get("autofit", true), fitBusy = false, fitTimer = null, fitSent = false;
+const fitState = { key: "" };
+$("autoFit").checked = autoFit; screenEl.classList.toggle("fit", autoFit);
+let fitCtx = null;
+function fitSize() {
+  if (screenEl.hidden || !screenEl.clientWidth || !screenEl.clientHeight) return null;
+  const cs = getComputedStyle(screenEl);
+  fitCtx = fitCtx || document.createElement("canvas").getContext("2d");
+  fitCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const cw = fitCtx.measureText("MMMMMMMMMM").width / 10;
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.25;
+  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight), padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  return { cols: clamp(Math.floor((screenEl.clientWidth - padX) / cw), 20, 400), rows: clamp(Math.floor((screenEl.clientHeight - padY) / lh), 8, 200) };
+}
+async function applyFit(force) {
+  if ((!autoFit && !force) || curTab !== "term" || document.hidden || fitBusy || !canControl()) return;
+  const L = liveInfo(), sz = fitSize();
+  if (!L || !sz) return;
+  const key = L.pid + ":" + sz.cols + "x" + sz.rows;
+  if (!force && key === fitState.key) return;
+  fitBusy = true; fitState.key = key;                      // di-set dulu agar kegagalan tidak diulang terus-menerus
+  const r = await api("POST", "/api/remote/resize", { session: curSid, cols: sz.cols, rows: sz.rows });
+  fitBusy = false;
+  if (r.ok) { fitSent = true; fastPollUntil = Date.now() + 2500; setTimeout(pollScreen, 150); }
+  else if (force || !fitApplyFit.warned) { fitApplyFit.warned = true; actMsg("Auto-fit: " + (r.error || "gagal"), true); }
+}
+const fitApplyFit = { warned: false };
+function applyFitSoon(ms) { clearTimeout(fitTimer); fitTimer = setTimeout(() => applyFit(false), ms || 400); }
+$("autoFit").addEventListener("change", () => {
+  autoFit = $("autoFit").checked; store.set("autofit", autoFit); screenEl.classList.toggle("fit", autoFit);
+  if (autoFit) { fitState.key = ""; applyFitSoon(50); }
+});
+$("fitNow").addEventListener("click", () => { fitState.key = ""; applyFit(true); });
+async function fitRestore() {
+  const r = await api("POST", "/api/remote/resize", { session: curSid, restore: true });
+  fitSent = false; fitState.key = "";
+  if (r.ok) { fastPollUntil = Date.now() + 2500; setTimeout(pollScreen, 150); }
+  return r;
+}
+$("fitReset").addEventListener("click", async () => {
+  autoFit = false; $("autoFit").checked = false; store.set("autofit", false); screenEl.classList.remove("fit");
+  const r = await fitRestore();
+  actMsg(r.ok ? (r.restored ? "Ukuran jendela cmd dikembalikan." : "Ukuran belum pernah diubah.") : (r.error || "Gagal mengembalikan ukuran"), !r.ok);
+});
+new ResizeObserver(() => applyFitSoon()).observe(screenEl);          // layout berubah / panel Start <-> layar / keyboard HP
+window.addEventListener("resize", () => applyFitSoon(500));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) applyFitSoon(200); });
+window.addEventListener("pagehide", () => {   // tab ditutup: kembalikan ukuran jendela cmd di PC
+  if (fitSent && curSid) navigator.sendBeacon("/api/remote/resize", new Blob([JSON.stringify({ session: curSid, restore: true })], { type: "application/json" }));
+});
+
 // ---- tab ----
 function showTab(t) {
   curTab = t; document.body.dataset.tab = t;
@@ -912,7 +983,7 @@ function showTab(t) {
   document.querySelectorAll("#tabs [data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   $("pTrans").hidden = t !== "trans"; $("pChat").hidden = t !== "chat"; $("pTerm").hidden = t !== "term";
   if (t === "chat") { chatEl.scrollTop = chatEl.scrollHeight; $("msg").focus(); }
-  if (t === "term") { pollScreen(); if (!matchMedia("(pointer: coarse)").matches) screenEl.focus({ preventScroll: true }); }
+  if (t === "term") { applyFitSoon(150); pollScreen(); if (!matchMedia("(pointer: coarse)").matches) screenEl.focus({ preventScroll: true }); }
 }
 document.querySelectorAll("#tabs [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 syncChatToggles();

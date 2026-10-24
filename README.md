@@ -41,6 +41,7 @@ Trafik yang membawa header proxy dianggap bukan lokal, jadi selalu kena PIN.
 ## Penggunaan
 - Tab **Transkrip**: aliran event + filter per kolom. **Chat**: kirim pesan ke sesi yang berjalan. **Terminal**: layar live
   dengan keyboard langsung (desktop dan HP). Alt+1/2/3 ganti tab.
+- **Auto-fit**: area terminal di web diukur (kolom x baris) lalu jendela cmd di PC otomatis menyesuaikan, sehingga tidak perlu mengubah ukuran manual (desktop maupun HP). Ukuran asli dikembalikan saat tab web ditutup, atau lewat tombol *Ukuran asli*. Hanya untuk jendela cmd/conhost biasa (Windows Terminal ukurannya ikut jendelanya sendiri). Dibatasi ukuran terbesar yang muat di layar PC.
 - Sesi yang tidak berjalan menampilkan panel **Start** (Resume atau Fork). Tombol **Stop** menutup proses sesi.
 - Tautan langsung ke satu sesi: `/?s=<session-id>&tab=chat`.
 

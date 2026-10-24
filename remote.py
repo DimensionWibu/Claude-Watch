@@ -28,7 +28,7 @@ SESS_DIR = os.path.join(CLAUDE_HOME, "sessions")
 AGENT_KEY_FILE = os.path.join(HERE, "agent.key")
 AUDIT_FILE = os.path.join(HERE, "remote-audit.log")
 AGENT_PORT = int(os.environ.get("CLAUDE_WATCH_AGENT_PORT", "64001"))
-AGENT_VERSION = 5
+AGENT_VERSION = 6
 MAX_MSG = 8000
 SID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 

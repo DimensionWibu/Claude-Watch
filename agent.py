@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import consolectl  # noqa: E402
 
-AGENT_VERSION = 5
+AGENT_VERSION = 6
 _ORIG_SIZE = {}   # pid -> (kolom, baris) sebelum auto-fit pertama
 PORT = int(os.environ.get("CLAUDE_WATCH_AGENT_PORT", "64001"))
 KEY_FILE = os.path.join(HERE, "agent.key")
