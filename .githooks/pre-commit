@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blok commit bila ada file di luar daftar putih atau konten sensitif (PIN, token, data pribadi). Lihat REPO-RULES.md.
+PY=python
+command -v python >/dev/null 2>&1 || PY="py -3"
+exec $PY scripts/check-repo.py --staged

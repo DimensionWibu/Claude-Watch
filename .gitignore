@@ -1,0 +1,26 @@
+# ALLOWLIST: semua diabaikan kecuali yang dibuka eksplisit di bawah. File baru HARUS didaftarkan di sini
+# DAN di ALLOWED_FILES pada scripts/check-repo.py (lihat REPO-RULES.md). Jangan melonggarkan aturan ini.
+*
+!.gitignore
+!README.md
+!REPO-RULES.md
+!config.example.json
+!agent.py
+!auth.py
+!consolectl.py
+!index.html
+!install.ps1
+!uninstall.ps1
+!remote.py
+!server.py
+!service.py
+!settings.py
+!setpin.py
+!spawn.py
+!scripts/
+!scripts/check-repo.py
+!.githooks/
+!.githooks/pre-commit
+!.github/
+!.github/workflows/
+!.github/workflows/repo-guard.yml

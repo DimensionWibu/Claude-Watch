@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Watch</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2322c55e'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #fff; --text: #1b1f27; --muted: #667085; --line: #e3e6ec;
+  --ok: #15803d; --ok-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
+  --info: #1d4ed8; --info-bg: #dbeafe; --idle: #475467; --idle-bg: #eaecf0;
+  --user: #0f766e; --tool: #7c3aed; --think: #9333ea; --accent: #2563eb;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1218; --panel: #171b23; --text: #e6e9ef; --muted: #98a2b3; --line: #2a303b;
+    --ok: #4ade80; --ok-bg: #123524; --warn: #fbbf24; --warn-bg: #3a2c0b; --bad: #f87171; --bad-bg: #421616;
+    --info: #93c5fd; --info-bg: #14274a; --idle: #cbd2dc; --idle-bg: #272d38;
+    --user: #5eead4; --tool: #c4b5fd; --think: #d8b4fe; --accent: #60a5fa;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; display: flex; flex-direction: column; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+h1 { font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+select { flex: 1 1 280px; min-width: 0; max-width: 640px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.pill { font: 700 12px var(--mono); padding: 3px 10px; border-radius: 12px; border: 1px solid transparent; white-space: nowrap; }
+.pill.ori { background: var(--ok-bg); color: var(--ok); }
+.pill.fork { background: var(--warn-bg); color: var(--warn); }
+button.pill.fork { cursor: pointer; border-color: currentColor; }
+button.pill.fork:hover { filter: brightness(1.15); }
+.actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+button.act { padding: 5px 12px; background: var(--accent); color: #fff; border: 0; border-radius: 6px; cursor: pointer; font-weight: 600; }
+button.act:hover:not(:disabled) { filter: brightness(1.1); }
+button.act:disabled { background: var(--idle-bg); color: var(--muted); cursor: not-allowed; }
+.actmsg { font-size: 12px; color: var(--muted); max-width: 360px; }
+.actmsg.err { color: var(--bad); }
+label.chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+
+#banner { margin: 12px 16px 0; padding: 12px 16px; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; border: 1px solid transparent; }
+#banner .big { font-size: 20px; font-weight: 650; }
+#banner .timer { font: 600 20px var(--mono); font-variant-numeric: tabular-nums; }
+#banner .sub { color: inherit; opacity: .8; }
+#banner.ok { background: var(--ok-bg); color: var(--ok); }
+#banner.warn { background: var(--warn-bg); color: var(--warn); }
+#banner.bad { background: var(--bad-bg); color: var(--bad); }
+#banner.idle { background: var(--idle-bg); color: var(--idle); }
+#banner.info { background: var(--info-bg); color: var(--info); }
+
+#cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; padding: 12px 16px 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-width: 0; }
+.card .k { color: var(--muted); font-size: 12px; }
+.card .v { font: 600 18px var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.card .s { color: var(--muted); font-size: 11px; }
+
+#bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 16px 6px; color: var(--muted); }
+#bar .spacer { flex: 1; }
+#bar button { padding: 4px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+#bar button:hover { border-color: var(--accent); }
+
+main { flex: 1; min-height: 0; padding: 0 16px 12px; display: flex; flex-direction: column; }
+#head { display: grid; grid-template-columns: 64px 62px 92px 1fr; gap: 10px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--line); border-bottom: 0; border-radius: 8px 8px 0 0; scrollbar-gutter: stable; overflow-y: scroll; }
+#head > div { min-width: 0; }
+#head .h { font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; display: flex; justify-content: space-between; gap: 4px; }
+#head .h.on { color: var(--accent); }
+#head input { width: 100%; margin-top: 3px; padding: 3px 6px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+#head input.on { border-color: var(--accent); }
+#feed { flex: 1; min-height: 0; min-width: 0; overflow-y: scroll; overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 0 0 8px 8px; }
+.row[hidden] { display: none; }
+.empty { padding: 28px; text-align: center; color: var(--muted); }
+.row { display: grid; grid-template-columns: 64px 62px 92px 1fr; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--line); align-items: start; }
+.row:last-child { border-bottom: 0; }
+.row .t { font: 12px var(--mono); color: var(--muted); }
+.row .gap { font: 12px var(--mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.row .gap.warn { color: var(--warn); font-weight: 700; } .row .gap.bad { color: var(--bad); font-weight: 700; }
+.badge { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .03em; padding: 1px 6px; border-radius: 4px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; background: var(--idle-bg); color: var(--idle); }
+.k-user .badge { background: var(--ok-bg); color: var(--user); }
+.k-text .badge { background: var(--info-bg); color: var(--info); }
+.k-thinking .badge { background: var(--idle-bg); color: var(--think); }
+.k-tool_use .badge { background: var(--warn-bg); color: var(--tool); }
+.k-tool_result .badge.err, .k-system .badge.err { background: var(--bad-bg); color: var(--bad); }
+.body { min-width: 0; }
+.txt { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; cursor: pointer; }
+.txt.open { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
+.k-text .txt, .k-user .txt { font-family: inherit; font-size: 14px; }
+.k-tool_result .txt, .k-request .txt, .k-system .txt, .k-thinking .txt { color: var(--muted); }
+.chips { margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px 10px; font: 11px var(--mono); color: var(--muted); }
+.chips b { color: var(--text); font-weight: 600; }
+.toast { position: fixed; right: 20px; bottom: 20px; padding: 6px 12px; background: var(--accent); color: #fff; border: 0; border-radius: 16px; cursor: pointer; display: none; }
+/* ---- tab, chat, terminal (mode remote) ---- */
+.panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.panel[hidden] { display: none; }
+#tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 12px 16px 0; }
+#tabs .spacer { flex: 1; }
+button.tab { padding: 6px 16px; background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; cursor: pointer; color: var(--muted); font-weight: 650; }
+button.tab:hover { color: var(--text); }
+button.tab[aria-selected="true"] { background: var(--panel); border-color: var(--line); color: var(--text); }
+.pill.live-on { background: var(--ok-bg); color: var(--ok); } .pill.live-busy { background: var(--warn-bg); color: var(--warn); }
+.pill.live-off { background: var(--idle-bg); color: var(--idle); } .pill.live-na { background: var(--bad-bg); color: var(--bad); }
+#tabs .small { padding: 3px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.box { flex: 1; min-height: 0; margin: 0 16px 12px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 0 8px 8px 8px; overflow: hidden; }
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+#chat { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+#chat.nothink .think, #chat.notool .toolchip { display: none; }
+.msg { max-width: min(80ch, 90%); padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.u { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.msg.a { align-self: flex-start; background: var(--idle-bg); border-bottom-left-radius: 4px; }
+.msg.pending { opacity: .7; }
+.msg .meta { display: block; font-size: 11px; opacity: .75; margin-top: 3px; }
+.msg pre { margin: 6px 0 0; padding: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; overflow: auto; font: 12.5px/1.4 var(--mono); white-space: pre; }
+.msg code { font: 12.5px var(--mono); background: rgba(127, 127, 127, .2); padding: 0 4px; border-radius: 4px; }
+.msg.u code { background: rgba(255, 255, 255, .22); }
+.think { align-self: flex-start; font-size: 12px; color: var(--muted); }
+details.toolchip { align-self: flex-start; max-width: min(100ch, 94%); font: 12px var(--mono); }
+details.toolchip > summary { cursor: pointer; padding: 3px 10px; background: var(--warn-bg); color: var(--tool); border-radius: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.toolchip[open] > summary { white-space: normal; }
+details.toolchip pre { margin: 4px 0 0; padding: 8px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; overflow: auto; max-height: 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#chatNote { padding: 6px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+#chatNote.err { color: var(--bad); }
+#chatNote button { padding: 3px 10px; }
+#composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); align-items: flex-end; }
+#msg { flex: 1; min-width: 0; resize: vertical; min-height: 44px; max-height: 220px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+#msg:disabled { opacity: .6; }
+.cbtns { display: flex; flex-direction: column; gap: 6px; }
+button.act.danger { background: var(--bad); color: #fff; }
+button.act.warn { background: var(--warn); color: #fff; }
+.termkeys { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); align-items: center; }
+.termkeys button { padding: 4px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font: 12px var(--mono); }
+.termkeys button:hover:not(:disabled) { border-color: var(--accent); }
+.termkeys button:disabled { opacity: .5; cursor: not-allowed; }
+.termkeys button.danger { border-color: var(--bad); color: var(--bad); }
+.termkeys .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+#screen { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 10px 12px; background: #0b0e13; color: #d8dde6; font: 12.5px/1.25 var(--mono); white-space: pre; }
+#rawform { display: flex; flex-wrap: wrap; gap: 8px 10px; padding: 10px; border-top: 1px solid var(--line); align-items: flex-end; }
+#raw { flex: 1; min-width: 200px; min-height: 64px; max-height: 240px; resize: vertical; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: 14px/1.45 var(--mono); }
+#raw:disabled { opacity: .6; }
+#rawform .rawopts { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.kbbar { border-bottom: 1px solid var(--line); }
+.kbstate { font: 700 11px var(--mono); padding: 2px 8px; border-radius: 10px; background: var(--idle-bg); color: var(--idle); }
+.kbstate.on { background: var(--ok-bg); color: var(--ok); }
+.kbhelp { font-size: 11.5px; }
+.startbox { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; background: #0b0e13; color: #d8dde6; }
+.startbox[hidden] { display: none; }
+.startbox p { margin: 0; max-width: 46ch; } .startbox .hint { font-size: 12.5px; color: #98a2b3; } #startMsg.err { color: #f87171; }
+.startbtns { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.startbtns .act { padding: 10px 18px; font-size: 15px; }
+#screen[hidden] { display: none; }
+#screen:focus-visible { outline: 2px solid var(--ok); outline-offset: -2px; }
+.cap { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; pointer-events: none; }
+@media (pointer: coarse) { .termkeys button { padding: 10px 14px; font-size: 14px; min-width: 44px; } .kbhelp { display: none; } }
+#termMeta { margin-left: auto; color: var(--muted); font-size: 11px; }
+@media (max-width: 640px) {
+  body[data-tab="chat"] #cards, body[data-tab="term"] #cards { display: none; }   /* beri ruang untuk chat/terminal */
+  body[data-tab="chat"] #banner .sub, body[data-tab="term"] #banner .sub { display: none; }
+  .box { margin: 0 8px 8px; } #tabs { padding: 8px 8px 0; } #composer { flex-wrap: wrap; } .cbtns { flex-direction: row; }
+  #head { grid-template-columns: 1fr 1fr; }
+  .row { grid-template-columns: 56px 1fr; }
+  .row .gap { grid-column: 2; text-align: left; } .row .badge { grid-column: 2; justify-self: start; } .row .body { grid-column: 1 / -1; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot" id="conn" title="koneksi"></span>Claude Watch</h1>
+  <select id="sel" aria-label="Pilih sesi"></select>
+  <span id="lineage" aria-live="polite"></span>
+  <label class="chk"><input type="checkbox" id="auto" checked> Ikuti sesi terbaru</label>
+  <span class="actions">
+    <button type="button" id="bResume" class="act" title="Buka cmd baru: claude --resume (melanjutkan sesi yang sama)">▶ Resume</button>
+    <button type="button" id="bFork" class="act" title="Buka cmd baru: claude --resume --fork-session (salinan sesi baru)">⑂ Fork</button>
+    <label class="chk" title="Setelah Resume/Fork, otomatis jawab dialog 'trust this folder' di jendela cmd (hanya bila folder di dialog sama dengan folder kerja sesi)"><input type="checkbox" id="autoTrust" checked> auto-trust</label>
+    <button type="button" id="bStop" class="act danger" title="Tutup proses claude sesi ini (transkrip tetap tersimpan; bisa di-Resume lagi)" disabled>⏻ Stop</button>
+    <button type="button" id="bNew" class="act" title="Buka sesi ini langsung di tab browser baru (langsung ke Chat)">↗ Tab baru</button>
+    <span id="actMsg" class="actmsg" role="status" aria-live="polite"></span>
+  </span>
+</header>
+
+<div id="banner" class="idle" role="status" aria-live="polite">
+  <span class="big" id="bState">Menghubungkan…</span>
+  <span class="timer" id="bTimer"></span>
+  <span class="sub" id="bSub"></span>
+</div>
+
+<section id="cards" aria-label="Statistik token">
+  <div class="card"><div class="k">Output token (sesi)</div><div class="v" id="cOut">–</div><div class="s" id="cOutS"></div></div>
+  <div class="card"><div class="k">Input segar</div><div class="v" id="cIn">–</div></div>
+  <div class="card"><div class="k">Cache dibaca</div><div class="v" id="cCr">–</div></div>
+  <div class="card"><div class="k">Cache ditulis</div><div class="v" id="cCw">–</div></div>
+  <div class="card"><div class="k">Konteks saat ini</div><div class="v" id="cCtx">–</div><div class="s" id="cModel"></div></div>
+  <div class="card"><div class="k">Kecepatan respons terakhir</div><div class="v" id="cRate">–</div><div class="s" id="cReq"></div></div>
+</section>
+
+<nav id="tabs" role="tablist" aria-label="Tampilan">
+  <button type="button" class="tab" role="tab" data-tab="trans" aria-selected="true">Transkrip</button>
+  <button type="button" class="tab" role="tab" data-tab="chat" aria-selected="false">Chat</button>
+  <button type="button" class="tab" role="tab" data-tab="term" aria-selected="false">Terminal</button>
+  <span class="spacer"></span>
+  <span id="liveChip" class="pill live-off" title="Status proses claude sesi ini">…</span>
+  <span id="authArea"></span>
+</nav>
+
+<div id="pTrans" class="panel">
+<div id="bar">
+  <span>Tampilkan:</span>
+  <label class="chk"><input type="checkbox" data-f="request" checked> request</label>
+  <label class="chk"><input type="checkbox" data-f="thinking" checked> thinking</label>
+  <label class="chk"><input type="checkbox" data-f="tool_use" checked> tool</label>
+  <label class="chk"><input type="checkbox" data-f="tool_result" checked> hasil tool</label>
+  <label class="chk"><input type="checkbox" data-f="system" checked> sistem</label>
+  <span class="spacer"></span>
+  <span id="count"></span>
+  <button id="clear" type="button">Bersihkan tampilan</button>
+</div>
+
+<main>
+  <div id="head" role="search" aria-label="Filter kolom">
+    <div><div class="h" id="hT">Waktu</div><input id="fT" type="search" placeholder="mis. 23.1" aria-label="Filter kolom Waktu"></div>
+    <div><div class="h" id="hG">Jeda</div><input id="fG" type="number" min="0" step="1" placeholder="≥ detik" aria-label="Filter kolom Jeda, minimal detik"></div>
+    <div><div class="h" id="hK">Jenis</div><input id="fK" type="search" list="kinds" placeholder="tool/nama…" aria-label="Filter kolom Jenis"></div>
+    <div><div class="h" id="hX">Isi</div><input id="fX" type="search" placeholder="cari teks…" aria-label="Filter kolom Isi"></div>
+  </div>
+  <datalist id="kinds"><option value="user"><option value="claude"><option value="think"><option value="tool"><option value="hasil"><option value="req"><option value="sys"></datalist>
+  <div id="feed" tabindex="0" aria-label="Aliran event"><div class="empty">Menunggu data…</div></div>
+</main>
+</div>
+
+<div id="pChat" class="panel" hidden role="tabpanel" aria-label="Chat dengan sesi">
+  <div class="box">
+    <div class="tools">
+      <span>Chat langsung ke sesi ini (diketik ke terminal Claude yang sedang berjalan).</span>
+      <label class="chk"><input type="checkbox" id="showThink"> thinking</label>
+      <label class="chk"><input type="checkbox" id="showTool" checked> aktivitas tool</label>
+    </div>
+    <div id="chat" class="notool nothink" aria-live="polite"></div>
+    <div id="chatNote" role="status"></div>
+    <form id="composer" autocomplete="off">
+      <textarea id="msg" rows="2" aria-label="Pesan ke Claude" placeholder="Ketik pesan… (Enter kirim · Shift+Enter baris baru · awali / untuk slash command)"></textarea>
+      <div class="cbtns">
+        <button type="submit" id="send" class="act">Kirim ➤</button>
+        <button type="button" id="bEsc" class="act warn" title="Tekan Esc di terminal: hentikan proses Claude yang sedang berjalan">⏹ Interupsi</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="pTerm" class="panel" hidden role="tabpanel" aria-label="Terminal sesi">
+  <div class="box">
+    <div class="termkeys" id="termKeys">
+      <button type="button" data-k="enter">Enter</button>
+      <button type="button" data-k="esc">Esc</button>
+      <button type="button" data-k="up">↑</button><button type="button" data-k="down">↓</button>
+      <button type="button" data-k="left">←</button><button type="button" data-k="right">→</button>
+      <button type="button" data-k="tab">Tab</button>
+      <button type="button" data-k="shift+tab" title="Ganti mode izin (plan / auto-accept / dst.)">⇧Tab</button>
+      <span class="sep"></span>
+      <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>
+      <button type="button" data-k="y">y</button><button type="button" data-k="n">n</button>
+      <span class="sep"></span>
+      <button type="button" data-k="backspace">⌫</button>
+      <button type="button" data-k="ctrl+o" title="Ctrl+O: tampilan transkrip di terminal">Ctrl+O</button>
+      <button type="button" data-k="ctrl+c" class="danger" title="Ctrl+C. Dua kali berturut-turut MENUTUP Claude">Ctrl+C</button>
+      <button type="button" id="tStop" class="danger" title="Tutup proses claude sesi ini" disabled>⏻ Stop sesi</button>
+      <span id="termMeta"></span>
+    </div>
+    <div class="tools kbbar">
+      <label class="chk" title="Tombol keyboard langsung diteruskan ke terminal tanpa klik"><input type="checkbox" id="liveKb" checked> ⌨ Keyboard langsung</label>
+      <span id="kbState" class="kbstate"></span>
+      <span class="kbhelp">Ketik / Esc / panah / Tab / ⇧Tab / Ctrl+C·O langsung diteruskan · Ctrl+V tempel · Alt+1/2/3 ganti tab · di HP ketuk layar untuk membuka keyboard</span>
+    </div>
+    <div id="startBox" class="startbox" hidden>
+      <p id="startMsg">Sesi ini tidak sedang berjalan.</p>
+      <div class="startbtns">
+        <button type="button" class="act" id="sResume">▶ Start sesi (Resume)</button>
+        <button type="button" class="act" id="sFork">⑂ Start sebagai Fork</button>
+      </div>
+      <p class="hint">Jendela cmd terbuka di PC server dan dijalankan otomatis. Setelah sesi hidup, tab ini langsung bisa dikontrol. Resume = lanjut sesi yang sama; Fork = salinan baru.</p>
+    </div>
+    <pre id="screen" tabindex="0" aria-label="Isi layar terminal. Fokus di sini lalu ketik: langsung diteruskan ke terminal.">Pilih sesi yang sedang berjalan…</pre>
+    <input id="cap" class="cap" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" aria-label="Penangkap keyboard virtual untuk terminal">
+    <form id="rawform" autocomplete="off">
+      <textarea id="raw" rows="2" aria-label="Ketik langsung ke terminal" placeholder="Ketik langsung ke terminal… (Enter kirim · Shift+Enter baris baru)"></textarea>
+      <div class="rawopts">
+        <label class="chk"><input type="checkbox" id="rawEnter" checked> + Enter</label>
+        <button type="submit" class="act" id="rawSend">Kirim ➤</button>
+      </div>
+    </form>
+  </div>
+</div>
+<button class="toast" id="toBottom" type="button">↓ event baru</button>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const nf = new Intl.NumberFormat("id-ID");
+const fmt = (n) => (n == null ? "–" : nf.format(n));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("cw." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("cw." + k, JSON.stringify(v)); } catch {} },
+};
+
+// Deep link: /?s=<session-id>&tab=chat membuka sesi itu langsung (dipakai tombol "Tab baru" & auto-buka setelah Resume/Fork).
+// Tab yang di-pin tidak menyimpan pilihan ke localStorage supaya tidak mengganggu tab utama.
+const QS = new URLSearchParams(location.search);
+const PINNED = /^[0-9a-f-]{36}$/i.test(QS.get("s") || "") ? QS.get("s").toLowerCase() : null;
+const sessionUrl = (sid, tab) => location.origin + "/?s=" + encodeURIComponent(sid) + "&tab=" + (tab || "chat");
+let es = null, curSid = null, status = null, skew = 0, sessions = [];
+let filters = store.get("filters", {});
+const MAX_ROWS = 1500;
+const feed = $("feed");
+let pinned = true, unseen = 0;
+
+// ---------- koneksi ----------
+function connect(sid) {
+  if (es) es.close();
+  curSid = sid; status = null;
+  if (!PINNED) store.set("sid", sid); else history.replaceState(null, "", sessionUrl(sid, curTab));
+  chatReset(); renderLive(); screenReset();
+  feed.replaceChildren(Object.assign(document.createElement("div"), { className: "empty", textContent: "Memuat sesi…" }));
+  es = new EventSource("/api/stream?session=" + encodeURIComponent(sid) + "&backlog=80");
+  es.onopen = () => setConn(true);
+  es.onerror = () => setConn(false);
+  es.addEventListener("backlog", (e) => { feed.replaceChildren(); chatReset(); addEntries(JSON.parse(e.data).entries, true); });
+  es.addEventListener("entries", (e) => addEntries(JSON.parse(e.data).entries, false));
+  es.addEventListener("status", (e) => { status = JSON.parse(e.data); skew = status.now - Date.now() / 1000; renderStatus(); renderLive(); });
+}
+function setConn(on) {
+  const c = $("conn"); c.className = "dot " + (on ? "on" : "off");
+  if (!on) { $("bState").textContent = "Terputus dari server… mencoba lagi"; fetch("/api/capabilities").then((r) => { if (r.status === 401) location.reload(); }).catch(() => {}); }
+}
+
+async function loadSessions() {
+  try {
+    const r = await fetch("/api/sessions");
+    if (r.status === 401) { location.reload(); return; }   // sesi PIN habis -> halaman PIN
+    const d = await r.json();
+    sessions = d.sessions;
+    const sel = $("sel"), keep = curSid;
+    // jangan bangun ulang daftar saat dropdown sedang dipakai
+    if (document.activeElement !== sel || !sel.options.length) sel.replaceChildren(...sessions.map((s) => {
+      const o = document.createElement("option");
+      o.value = s.sid;
+      const age = s.age < 90 ? Math.round(s.age) + " dtk" : s.age < 5400 ? Math.round(s.age / 60) + " mnt" : (s.age / 3600).toFixed(1) + " jam";
+      const tag = (s.live ? `[● LIVE ${s.live.status || ""}] · ` : "") + (s.forked_from ? `[⑂ FORK dari ${s.forked_from.slice(0, 8)}] · ` : s.forks ? `[◆ ORI · ${s.forks} fork] · ` : "");
+      o.textContent = `${age} lalu · ${tag}${s.cwd || s.project} · ${s.title || "(tanpa judul)"} · #${s.sid.slice(0, 8)}`;
+      return o;
+    }));
+    if (!sessions.length) return;
+    const newest = sessions[0].sid;
+    let want = keep;
+    if ($("auto").checked) want = newest;
+    else if (!want) want = PINNED || store.get("sid", newest);
+    if (!sessions.some((s) => s.sid === want)) want = newest;
+    if (document.activeElement !== sel) sel.value = want;
+    if (want !== curSid) connect(want);
+    renderLineage(); renderLive();
+  } catch { /* server mati: onerror SSE sudah menandai */ }
+}
+function renderLineage() {
+  const L = $("lineage"); L.replaceChildren();
+  const s = sessions.find((x) => x.sid === curSid);
+  if (!s) return;
+  if (s.forked_from) {
+    const p = sessions.find((x) => x.sid === s.forked_from);
+    const b = el(p ? "button" : "span", "pill fork", "⑂ FORK dari " + s.forked_from.slice(0, 8) + (p ? " ↗" : " (di luar daftar)"));
+    if (p) {
+      b.type = "button"; b.title = "Buka sesi asli: " + (p.title || p.sid);
+      b.addEventListener("click", () => { stopAuto(); $("sel").value = p.sid; connect(p.sid); renderLineage(); });
+    }
+    L.appendChild(b);
+  } else if (s.forks) {
+    L.appendChild(el("span", "pill ori", "◆ ORI · " + s.forks + " fork"));
+  }
+}
+function stopAuto() { $("auto").checked = false; if (!PINNED) store.set("auto", false); }
+$("sel").addEventListener("change", () => { stopAuto(); connect($("sel").value); renderLineage(); });
+$("auto").addEventListener("change", () => { if (!PINNED) store.set("auto", $("auto").checked); loadSessions(); });
+$("auto").checked = PINNED ? false : store.get("auto", true);
+if (PINNED) $("auto").parentElement.hidden = true;   // tab ini terkunci ke satu sesi
+
+// ---------- feed ----------
+const LABEL = { user: "user", text: "claude", thinking: "think", tool_use: "tool", tool_result: "hasil", request: "req", system: "sys" };
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function hhmmss(ts) { return new Date(ts * 1000).toLocaleTimeString("id-ID", { hour12: false }); }
+
+function rowFor(e) {
+  const r = el("div", "row k-" + e.kind); r.dataset.kind = e.kind;
+  r.appendChild(el("div", "t", hhmmss(e.ts)));
+  const g = el("div", "gap", e.gap == null ? "" : "+" + (e.gap < 10 ? e.gap.toFixed(1) : Math.round(e.gap)) + "s");
+  if (e.gap > 60) g.classList.add("bad"); else if (e.gap > 20) g.classList.add("warn");
+  r.appendChild(g);
+  const b = el("div", "badge" + (e.error || e.level === "error" ? " err" : ""), e.kind === "tool_use" ? (e.tool || "tool") : LABEL[e.kind] || e.kind);
+  b.title = b.textContent;
+  r.appendChild(b);
+  const body = el("div", "body");
+  const t = el("div", "txt", e.text || "");
+  t.title = "klik untuk buka/tutup";
+  t.addEventListener("click", () => t.classList.toggle("open"));
+  body.appendChild(t);
+  const chips = [];
+  if (e.ms) chips.push(["thinking", (e.ms / 1000).toFixed(1) + " dtk"]);
+  if (e.usage) {
+    chips.push(["in", fmt(e.usage.in)], ["cache↓", fmt(e.usage.cr)], ["cache↑", fmt(e.usage.cw)], ["out", fmt(e.usage.out)]);
+  }
+  if (e.rate) chips.push(["≈", e.rate + " tok/s"]);
+  if (chips.length) {
+    const c = el("div", "chips");
+    for (const [k, v] of chips) { const s = el("span", null, k + " "); s.appendChild(el("b", null, v)); c.appendChild(s); }
+    body.appendChild(c);
+  }
+  r.appendChild(body);
+  r._d = { t: hhmmss(e.ts), gap: e.gap || 0, lab: ((e.kind === "tool_use" ? (e.tool || "") + " tool" : LABEL[e.kind] || "") + " " + e.kind).toLowerCase(), x: (e.text || "").toLowerCase() };
+  applyFilter(r);
+  return r;
+}
+// filter per kolom (AND dengan checkbox jenis di atas)
+const colF = Object.assign({ t: "", g: "", k: "", x: "" }, store.get("colf", {}));
+function applyFilter(r) {
+  const d = r._d;
+  let show = filters[r.dataset.kind] !== false;
+  if (show && colF.t) show = d.t.includes(colF.t);
+  if (show && colF.g !== "") show = d.gap >= Number(colF.g);
+  if (show && colF.k) show = d.lab.includes(colF.k.toLowerCase());
+  if (show && colF.x) show = d.x.includes(colF.x.toLowerCase());
+  r.hidden = !show;
+}
+const COLS = { t: ["fT", "hT"], g: ["fG", "hG"], k: ["fK", "hK"], x: ["fX", "hX"] };
+for (const [key, [inId, hId]] of Object.entries(COLS)) {
+  const inp = $(inId); inp.value = colF[key];
+  const mark = () => { const on = colF[key] !== ""; inp.classList.toggle("on", on); $(hId).classList.toggle("on", on); };
+  mark();
+  inp.addEventListener("input", () => {
+    colF[key] = inp.value.trim(); store.set("colf", colF); mark();
+    feed.querySelectorAll(".row").forEach(applyFilter); updateCount();
+  });
+}
+
+function addEntries(list, initial) {
+  if (!list.length && initial) { feed.appendChild(el("div", "empty", "Belum ada event di sesi ini.")); return; }
+  const empty = feed.querySelector(".empty"); if (empty) empty.remove();
+  const frag = document.createDocumentFragment();
+  for (const e of list) { frag.appendChild(rowFor(e)); chatAdd(e); }
+  feed.appendChild(frag);
+  while (feed.childElementCount > MAX_ROWS) feed.firstElementChild.remove();
+  if (pinned || initial) feed.scrollTop = feed.scrollHeight;
+  else { unseen += list.length; $("toBottom").style.display = "block"; $("toBottom").textContent = "↓ " + unseen + " event baru"; }
+  updateCount();
+}
+function updateCount() {
+  const all = feed.querySelectorAll(".row").length, n = feed.querySelectorAll(".row:not([hidden])").length;
+  $("count").textContent = n === all ? n + " baris" : n + " dari " + all + " baris";
+}
+feed.addEventListener("scroll", () => {
+  pinned = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  if (pinned) { unseen = 0; $("toBottom").style.display = "none"; }
+});
+$("toBottom").addEventListener("click", () => { feed.scrollTop = feed.scrollHeight; });
+$("clear").addEventListener("click", () => { feed.replaceChildren(); updateCount(); });
+document.querySelectorAll("[data-f]").forEach((cb) => {
+  cb.checked = filters[cb.dataset.f] !== false;
+  cb.addEventListener("change", () => {
+    filters[cb.dataset.f] = cb.checked; store.set("filters", filters);
+    feed.querySelectorAll(".row").forEach(applyFilter); updateCount();
+  });
+});
+
+// ---------- status ----------
+function fmtDur(s) { s = Math.max(0, Math.floor(s)); const m = Math.floor(s / 60); return m ? m + "m " + String(s % 60).padStart(2, "0") + "s" : s + "s"; }
+function renderStatus() {
+  if (!status) return;
+  const s = status, tk = s.tokens;
+  $("cOut").textContent = fmt(tk.out); $("cIn").textContent = fmt(tk.in); $("cCr").textContent = fmt(tk.cr); $("cCw").textContent = fmt(tk.cw);
+  $("cCtx").textContent = fmt(s.context); $("cModel").textContent = s.model || "";
+  $("cRate").textContent = s.rate ? s.rate + " tok/s" : "–";
+  $("cReq").textContent = fmt(s.requests) + " request" + (s.turnMs ? " · turn terakhir " + (s.turnMs / 1000).toFixed(1) + "s" : "");
+  $("cOutS").textContent = s.title || "";
+
+  const b = $("banner");
+  if (s.loading) { b.className = "info"; $("bState").textContent = "Memindai sesi besar…"; $("bTimer").textContent = ""; $("bSub").textContent = ""; return; }
+  const nowS = Date.now() / 1000 + skew, live = s.live;
+  let idle = s.lastEventTs ? nowS - s.lastEventTs : 0;
+  let k = s.state.kind, d = s.state.detail;
+  if (live) {   // registry Claude (~/.claude/sessions) = sumber status paling akurat
+    const act = Math.max(s.lastEventTs || 0, live.statusUpdatedAt || 0);
+    idle = act ? nowS - act : 0;
+    if (live.status === "idle") k = "idle";
+    else if (live.status === "busy" && k === "idle") { k = "waiting_model"; d = "sesi sibuk"; }
+  }
+  let cls = "idle", txt = "Tidak ada aktivitas", sub = "";
+  if (k === "idle") {
+    cls = "idle"; txt = live ? "Idle · menunggu input" : "Selesai · menunggu input";
+    sub = live ? "Proses claude hidup (pid " + live.pid + ")" + (live.controllable ? " · bisa dikirimi pesan dari tab Chat" : "") : "Claude sedang tidak bekerja";
+  }
+  else if (live && live.status && live.status !== "busy") { cls = "warn"; txt = "Status: " + live.status; sub = "Status dari registry Claude (pid " + live.pid + ")"; }
+  else if (!live && idle > 120) { cls = "idle"; txt = "Tidak terdeteksi berjalan"; sub = "Proses claude sesi ini tidak ada di registry (sesi ditutup / dijalankan tanpa terminal). Event terakhir " + fmtDur(idle) + " lalu"; }
+  else if (k === "waiting_model") {
+    sub = "Menunggu respons model" + (d ? " (" + d + ")" : "");
+    if (idle < 20) { cls = "ok"; txt = "Model bekerja"; }
+    else if (idle < 60) { cls = "warn"; txt = "Lambat"; sub += " · belum ada output > 20 dtk; mungkin thinking panjang atau API antre"; }
+    else { cls = "bad"; txt = "Kemungkinan stuck"; sub += " · > 60 dtk tanpa event; cek retry/koneksi API"; }
+  } else if (k === "running_tool") {
+    sub = "Tool berjalan: " + d;
+    if (idle < 30) { cls = "ok"; txt = "Tool berjalan"; }
+    else if (idle < 120) { cls = "warn"; txt = "Tool lama"; sub += " · mungkin menunggu persetujuan izin di terminal"; }
+    else { cls = "bad"; txt = "Tool menggantung?"; sub += " · > 2 menit; cek izin / proses tool"; }
+  }
+  b.className = cls; $("bState").textContent = txt; $("bSub").textContent = sub;
+  $("bTimer").textContent = k === "idle" ? "" : fmtDur(idle);
+  const dotColor = { ok: "●", warn: "▲", bad: "■", idle: "○", info: "…" }[cls];
+  const nm = PINNED ? ((s.title || s.sid.slice(0, 8)).slice(0, 28) + " · ") : "";
+  document.title = `${dotColor} ${nm}${txt}${k === "idle" ? "" : " " + fmtDur(idle)} · Claude Watch`;
+}
+setInterval(renderStatus, 500);   // timer jalan terus walau server tidak kirim event
+
+// ---------- resume / fork (spawn cmd di PC server) ----------
+let canSpawn = false;
+let authExp = null;   // epoch ms habisnya sesi PIN (hanya untuk akses non-lokal)
+function loadCaps() {
+  return fetch("/api/capabilities").then((r) => { if (r.status === 401) { location.reload(); return null; } return r.json(); }).then((c) => {
+    if (!c) return;
+    canSpawn = !!c.spawn;
+    for (const id of ["bResume", "bFork"]) { $(id).disabled = !canSpawn; if (!canSpawn) $(id).title = "Tidak tersedia"; }
+    authExp = c.auth && c.auth.required && c.auth.remaining ? Date.now() + c.auth.remaining * 1000 : null;
+    renderAuth();
+  }).catch(() => {});
+}
+function renderAuth() {
+  const a = $("authArea"); a.replaceChildren();
+  if (!authExp) return;
+  if (Date.now() >= authExp) { location.reload(); return; }   // sesi habis -> kembali ke halaman PIN
+  const mins = Math.max(1, Math.ceil((authExp - Date.now()) / 60000));
+  const chip = el("span", "pill live-on", "🔓 sesi " + mins + " mnt"); chip.title = "Sesi PIN berlaku 1 jam sejak login";
+  const b = el("button", "small", "Keluar"); b.type = "button";
+  b.addEventListener("click", async () => { await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); location.reload(); });
+  a.append(chip, " ", b);
+}
+setInterval(renderAuth, 20000);
+loadCaps();
+function actMsg(t, err) { const m = $("actMsg"); m.textContent = t; m.className = "actmsg" + (err ? " err" : ""); clearTimeout(actMsg.t); actMsg.t = setTimeout(() => { m.textContent = ""; }, 8000); }
+// opts.inPlace: mulai sesi tanpa tab baru (dipakai panel Start di tab Terminal/Chat; cocok untuk HP / akses remote).
+async function spawnSession(mode, opts = {}) {
+  const inPlace = !!opts.inPlace;
+  const sid = inPlace ? curSid : $("sel").value, s = sessions.find((x) => x.sid === sid);
+  if (!sid) return;
+  if (mode === "resume" && s && s.live &&
+      !confirm("Sesi ini SEDANG BERJALAN di terminal lain (pid " + s.live.pid + ").\nResume ke sesi yang sama akan bentrok (dua proses menulis transkrip yang sama). Pakai Fork, atau kontrol sesi itu lewat tab Chat.\n\nOK = tetap Resume, Batal = jangan.")) return;
+  if (mode === "resume" && s && !s.live && s.age < 120 &&
+      !confirm("Sesi ini baru aktif " + Math.round(s.age) + " dtk lalu. Pastikan tidak sedang dipakai di tempat lain.\n\nOK = lanjut Resume, Batal = jangan.")) return;
+  spawning(true);
+  const say = (t, err) => { actMsg(t, err); if (inPlace) setStartMsg(t, err); };
+  // Tab baru dibuka SEKARANG (masih dalam gesture klik, supaya tidak diblok popup blocker), diarahkan nanti
+  // ke sesi yang baru hidup. Mode inPlace tidak membuka tab.
+  const w = inPlace ? null : window.open("about:blank", "_blank");
+  try { if (w) { w.document.title = "Membuka sesi…"; w.document.body.textContent = "Membuka sesi…"; } } catch { /* abaikan */ }
+  let ok = false, target = null;
+  try {
+    const pre = await fetch("/api/live").then((x) => x.json()).catch(() => ({ live: {}, now: Date.now() / 1000 }));
+    say("Memulai " + (mode === "fork" ? "fork" : "resume") + "…");
+    const r = await fetch("/api/resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: sid, mode, autoTrust: $("autoTrust").checked }) });
+    if (r.status === 401) { location.reload(); return; }
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      ok = true; say((mode === "fork" ? "Fork" : "Resume") + " dibuka di PC (" + d.cwd + ") · menunggu proses terdaftar…" + (d.autoTrust ? " auto-trust aktif." : ""));
+      target = await waitNewSession(sid, mode, new Set(Object.keys(pre.live)), pre.now, d.cwd);
+      say(target ? "Sesi hidup." : "Proses claude belum terdaftar (mungkin menunggu dialog di jendela cmd di PC). Coba lagi atau cek PC.", !target);
+    } else say(d.error || "Gagal (" + r.status + ")", true);
+  } catch (e) { say("Gagal menghubungi server", true); }
+  if (inPlace) {
+    if (ok && target) {
+      await loadSessions();                       // sesi fork baru muncul di daftar (walau transkrip belum ada)
+      if (target !== curSid) { stopAuto(); $("sel").value = target; connect(target); renderLineage(); }
+      else renderLive();
+    }
+  } else if (w && !w.closed) { if (ok) w.location.href = sessionUrl(target || sid, "chat"); else w.close(); }
+  spawning(false);
+}
+function spawning(on) {
+  $("bResume").disabled = $("bFork").disabled = on || !canSpawn;
+  $("sResume").disabled = $("sFork").disabled = on || !canSpawn;
+}
+function setStartMsg(t, err) { const m = $("startMsg"); m.textContent = t; m.className = err ? "err" : ""; }
+$("sResume").addEventListener("click", () => spawnSession("resume", { inPlace: true }));
+$("sFork").addEventListener("click", () => spawnSession("fork", { inPlace: true }));// Tunggu proses claude baru muncul di registry (resume: sesi yang sama; fork: sesi baru di folder yang sama).
+async function waitNewSession(sid, mode, before, t0, cwd) {
+  for (let i = 0; i < 45; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let d; try { d = await fetch("/api/live").then((x) => x.json()); } catch { continue; }
+    const entries = Object.entries(d.live || {});
+    if (mode === "resume") {
+      const l = d.live[sid];
+      if (l && (!before.has(sid) || l.startedAt >= t0 - 2)) return sid;
+    } else {
+      const n = entries.find(([id, l]) => !before.has(id) && l.startedAt >= t0 - 3 && (!cwd || !l.cwd || l.cwd.toLowerCase() === cwd.toLowerCase()));
+      if (n) return n[0];
+    }
+  }
+  return null;
+}
+$("bNew").addEventListener("click", () => { const sid = $("sel").value; if (sid) window.open(sessionUrl(sid, "chat"), "_blank"); });
+$("bResume").addEventListener("click", () => spawnSession("resume"));
+$("bFork").addEventListener("click", () => spawnSession("fork"));
+$("bResume").disabled = $("bFork").disabled = true;
+
+// ================= mode remote: auth, tab, chat, terminal =================
+const ctl = { authed: true };   // tanpa token: siapa pun yang bisa membuka halaman ini bisa mengontrol
+let curTab = ["trans", "chat", "term"].includes(QS.get("tab")) ? QS.get("tab") : store.get("tab", "trans");
+async function api(method, path, body) {
+  const opt = { method, headers: {} };
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  let r, d;
+  try { r = await fetch(path, opt); if (r.status === 401) { location.reload(); return { ok: false, http: 401, error: "login diperlukan" }; } d = await r.json(); } catch { return { ok: false, http: 0, error: "gagal menghubungi server" }; }
+  return { ...d, ok: !!d.ok, http: r.status };   // 'status' dari server (busy/idle) jangan ditimpa
+}
+// ---- status live (registry Claude) ----
+function liveInfo() {
+  if (status && status.sid === curSid && "live" in status) return status.live;
+  const s = sessions.find((x) => x.sid === curSid);
+  return s ? s.live : null;
+}
+const canControl = () => { const L = liveInfo(); return ctl.authed && !!L && !!L.controllable; };
+let chatErr = { text: "", until: 0 };
+function renderLive() {
+  const L = liveInfo(), chip = $("liveChip");
+  if (!curSid) { chip.textContent = "…"; chip.className = "pill live-off"; }
+  else if (!L) { chip.textContent = "○ tidak berjalan"; chip.className = "pill live-off"; chip.title = "Tidak ada proses claude hidup untuk sesi ini. Pakai Resume/Fork untuk membukanya."; }
+  else if (!L.controllable) { chip.textContent = "● LIVE (" + L.entrypoint + ") · tidak bisa dikontrol"; chip.className = "pill live-na"; }
+  else { chip.textContent = "● LIVE · " + (L.status || "?") + " · pid " + L.pid; chip.className = "pill " + (L.status === "busy" ? "live-busy" : "live-on"); chip.title = "Proses claude hidup, bisa dikontrol"; }
+  const show = !!curSid && !L;                      // sesi tidak hidup: ganti layar dengan panel Start
+  $("startBox").hidden = !show; $("screen").hidden = show;
+  renderComposer();
+}
+function renderComposer() {
+  const ok = canControl(), L = liveInfo();
+  $("msg").disabled = $("send").disabled = $("bEsc").disabled = !ok;
+  $("raw").disabled = $("rawSend").disabled = !ok;
+  $("bStop").disabled = $("tStop").disabled = !ok || stopping;
+  document.querySelectorAll("#termKeys button").forEach((b) => (b.disabled = !ok));
+  const err = chatErr.until > Date.now() ? chatErr.text : "";
+  const sig = [ok, !!L, L && L.status, ctl.authed, canSpawn, err].join("|");
+  if (renderComposer.sig === sig) return;
+  renderComposer.sig = sig;
+  const n = $("chatNote"); n.replaceChildren(); n.className = err ? "err" : "";
+  if (err) { n.textContent = err; return; }
+  if (!L) {
+    n.append("Sesi ini tidak sedang berjalan, jadi belum bisa dichat. ");
+    for (const [m, label] of [["resume", "▶ Resume di cmd"], ["fork", "⑂ Fork di cmd"]]) {
+      const b = el("button", "act", label); b.type = "button"; b.disabled = !canSpawn;
+      b.addEventListener("click", () => spawnSession(m, { inPlace: true })); n.appendChild(b);
+    }
+    if (!canSpawn) n.append("(buka dari PC server untuk Resume/Fork)");
+  } else if (!L.controllable) n.textContent = "Sesi berjalan lewat '" + L.entrypoint + "' (bukan terminal CLI), tidak bisa dikontrol dari sini.";
+  else n.textContent = L.status === "busy"
+    ? "Claude sedang bekerja: pesan yang dikirim antre dan diproses setelah langkah ini. Gunakan Interupsi (Esc) untuk menghentikan."
+    : "Siap menerima pesan.";
+}
+setInterval(() => { renderComposer.sig = null; renderComposer(); }, 3000);
+
+// ---- chat (dibangun dari event transkrip yang sama) ----
+const chatEl = $("chat");
+let chatPinned = true, lastTool = null;
+const pend = [];
+const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+function chatReset() { chatEl.replaceChildren(); pend.length = 0; lastTool = null; }
+function renderRich(text) {
+  const frag = document.createDocumentFragment();
+  const parts = text.split(/```[^\n]*\n?([\s\S]*?)```/g);   // indeks ganjil = isi code fence
+  parts.forEach((p, i) => {
+    if (i % 2) { const c = p.replace(/\n$/, ""); if (c) frag.appendChild(el("pre", null, c)); return; }
+    if (i < parts.length - 1) p = p.replace(/\n+$/, "");
+    p.split(/(`[^`\n]+`)/g).forEach((q) => {
+      if (/^`[^`\n]+`$/.test(q)) frag.appendChild(el("code", null, q.slice(1, -1)));
+      else if (q) frag.appendChild(document.createTextNode(q));
+    });
+  });
+  return frag;
+}
+function bubble(cls, e, metaText) {
+  const n = el("div", "msg " + cls);
+  n.appendChild(renderRich(e.text || ""));
+  n._meta = el("span", "meta", metaText != null ? metaText : hhmmss(e.ts));
+  n.appendChild(n._meta);
+  return n;
+}
+function toolChip(e) {
+  let brief = e.text || "";
+  try {
+    const j = JSON.parse(e.text), v = j.command || j.file_path || j.pattern || j.query || j.prompt || j.description || j.url;
+    if (v) brief = typeof v === "string" ? v : JSON.stringify(v);
+  } catch {   // JSON terpotong (>6000 karakter): ambil field penting dengan regex
+    for (const f of ["command", "file_path", "pattern", "query", "description", "url"]) {
+      const m = new RegExp('"' + f + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)').exec(e.text || "");
+      if (m) { brief = m[1].replace(/\\\\/g, "\\").replace(/\\n/g, " ").replace(/\\"/g, '"'); break; }
+    }
+  }
+  const d = el("details", "toolchip");
+  d.append(el("summary", null, "⚙ " + (e.tool || "tool") + " · " + brief.replace(/\s+/g, " ").slice(0, 160)), el("pre", null, e.text || ""));
+  return d;
+}
+function chatAdd(e) {
+  let node = null;
+  if (e.kind === "user") {
+    const i = pend.findIndex((p) => norm(p.text) === norm(e.text));
+    if (i >= 0) { const p = pend.splice(i, 1)[0]; p.el.classList.remove("pending"); p.el._meta.textContent = hhmmss(e.ts); return; }
+    node = bubble("u", e);
+  } else if (e.kind === "text") node = bubble("a", e);
+  else if (e.kind === "thinking") node = el("div", "think", "💭 thinking" + (e.ms ? " · " + (e.ms / 1000).toFixed(1) + " dtk" : ""));
+  else if (e.kind === "tool_use") { node = toolChip(e); lastTool = node; }
+  else if (e.kind === "tool_result") {
+    if (lastTool) lastTool.appendChild(el("pre", null, "↳ hasil" + (e.error ? " (error)" : "") + "\n" + (e.text || "").slice(0, 4000)));
+    return;
+  } else return;
+  chatEl.appendChild(node);
+  while (chatEl.childElementCount > 500) chatEl.firstElementChild.remove();
+  if (chatPinned) chatEl.scrollTop = chatEl.scrollHeight;
+}
+chatEl.addEventListener("scroll", () => { chatPinned = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 60; });
+function addPending(text) {
+  const n = bubble("u pending", { text }, "mengirim…");
+  chatEl.appendChild(n);
+  pend.push({ text, el: n, t0: Date.now() });
+  chatPinned = true; chatEl.scrollTop = chatEl.scrollHeight;
+}
+setInterval(() => {
+  const L = liveInfo();
+  for (const p of pend) {
+    const age = (Date.now() - p.t0) / 1000;
+    p.el._meta.textContent = age > 25 && !(L && L.status === "busy") ? "belum tampil di transkrip · cek tab Terminal"
+      : L && L.status === "busy" ? "antre · Claude sedang bekerja" : "terkirim · menunggu Claude…";
+  }
+}, 1000);
+function syncChatToggles() {
+  chatEl.classList.toggle("nothink", !$("showThink").checked);
+  chatEl.classList.toggle("notool", !$("showTool").checked);
+}
+$("showThink").addEventListener("change", syncChatToggles); $("showTool").addEventListener("change", syncChatToggles);
+
+async function sendMsg() {
+  const t = $("msg").value;
+  if (!t.trim() || !canControl()) return;
+  $("send").disabled = true;
+  const r = await api("POST", "/api/remote/send", { session: curSid, text: t, enter: true });
+  if (r.ok) { $("msg").value = ""; addPending(t); chatErr = { text: "", until: 0 }; }
+  else chatErr = { text: "Gagal kirim: " + (r.error || r.http), until: Date.now() + 8000 };
+  renderComposer.sig = null; renderComposer();
+  $("msg").focus();
+}
+$("composer").addEventListener("submit", (e) => { e.preventDefault(); sendMsg(); });
+$("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); } });
+$("bEsc").addEventListener("click", async () => {
+  const r = await api("POST", "/api/remote/keys", { session: curSid, keys: ["esc"] });
+  chatErr = { text: r.ok ? "Esc terkirim ke terminal (interupsi)." : "Gagal: " + (r.error || r.http), until: Date.now() + 5000 };
+  renderComposer.sig = null; renderComposer();
+});
+
+// ---- stop sesi ----
+let stopping = false;
+async function stopSession() {
+  const sid = curSid, L = liveInfo();
+  if (!sid || !L || stopping) return;
+  const s = sessions.find((x) => x.sid === sid);
+  if (!confirm("Hentikan sesi ini?\n" + (s && s.title ? "\"" + s.title + "\"\n" : "") +
+      (L.status === "busy" ? "\nClaude SEDANG BEKERJA; pekerjaannya akan dihentikan.\n" : "") +
+      "\nProses claude ditutup (transkrip tetap tersimpan, bisa di-Resume lagi).")) return;
+  stopping = true; renderComposer.sig = null; renderComposer();
+  actMsg("Menghentikan sesi…");
+  const r = await api("POST", "/api/remote/stop", { session: sid });
+  stopping = false;
+  actMsg(r.ok ? (r.how === "graceful" ? "Sesi dihentikan." : "Sesi dihentikan paksa.") + (r.closedWindow ? " Jendela cmd ditutup." : "") : (r.error || "Gagal menghentikan"), !r.ok);
+  await loadSessions(); renderLive();
+}
+$("bStop").addEventListener("click", stopSession);
+$("tStop").addEventListener("click", stopSession);
+
+// ---- terminal ----
+const screenEl = $("screen");
+let screenBusy = false;
+function screenReset() { screenEl.textContent = "Memuat layar…"; $("termMeta").textContent = ""; }
+async function pollScreen() {
+  if (curTab !== "term" || document.hidden || screenBusy || !curSid) return;
+  if (!canControl()) { screenEl.textContent = "Sesi ini tidak sedang berjalan / tidak bisa dikontrol, jadi layarnya tidak tersedia."; return; }
+  const sid = curSid; screenBusy = true;
+  const r = await api("GET", "/api/remote/screen?session=" + encodeURIComponent(sid));
+  screenBusy = false;
+  if (sid !== curSid) return;
+  if (r.ok) { screenEl.textContent = r.rows.join("\n"); $("termMeta").textContent = r.cols + "×" + r.rows.length + " · " + (r.status || ""); }
+  else screenEl.textContent = "Gagal baca layar: " + (r.error || r.http);
+}
+let fastPollUntil = 0;   // setelah ada input, refresh layar lebih sering supaya terasa realtime
+(function pollLoop() { pollScreen().finally(() => setTimeout(pollLoop, Date.now() < fastPollUntil ? 300 : 1000)); })();
+async function sendKeys(keys) {
+  const r = await api("POST", "/api/remote/keys", { session: curSid, keys });
+  if (!r.ok) actMsg(r.error || "Gagal kirim tombol", true);
+  fastPollUntil = Date.now() + 2500; setTimeout(pollScreen, 150);
+  if (!matchMedia("(pointer: coarse)").matches) screenEl.focus({ preventScroll: true });   // fokus kembali ke layar agar keyboard langsung jalan
+}
+document.querySelectorAll("#termKeys [data-k]").forEach((b) => b.addEventListener("click", () => {
+  const k = b.dataset.k;
+  if (k === "ctrl+c" && !confirm("Ctrl+C: sekali = bersihkan input; dua kali berturut-turut MENUTUP Claude. Kirim?")) return;
+  sendKeys([k]);
+}));
+// ---- keyboard langsung: ketikan fisik (desktop) & keyboard virtual (HP) diteruskan ke terminal ----
+const KMAP = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "enter", Escape: "esc", Backspace: "backspace",
+  Delete: "delete", Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown" };
+const LIVE_CTRL = new Set(["ctrl+c", "ctrl+o", "ctrl+u"]);   // sisanya (Ctrl+R/L/T/W…) tetap milik browser
+const capEl = $("cap"), SENT = "​";
+capEl.value = SENT;
+let liveOn = store.get("livekb", true), lastCtrlC = 0;
+$("liveKb").checked = liveOn;
+$("liveKb").addEventListener("change", () => { liveOn = $("liveKb").checked; store.set("livekb", liveOn); renderKb(); });
+function liveEligible() {
+  if (curTab !== "term" || !liveOn || !canControl()) return false;
+  const a = document.activeElement;
+  return !a || a === document.body || a === screenEl || a === capEl;   // sedang mengetik di kotak lain = jangan dicegat
+}
+function renderKb() {
+  const on = liveEligible(), s = $("kbState");
+  s.className = "kbstate" + (on ? " on" : "");
+  s.textContent = !liveOn ? "mati" : !canControl() ? "sesi tak aktif" : on ? "● aktif" : "klik layar untuk fokus";
+}
+setInterval(renderKb, 500);
+// antrean: ketikan berurutan digabung lalu dikirim berkelompok (urutan tombol vs teks tetap terjaga)
+const liveQ = []; let liveBusy = false, liveTimer = null;
+function enqueue(op) {
+  const last = liveQ[liveQ.length - 1];
+  if (last && last.t === op.t && op.t !== "paste") { if (op.t === "text") last.v += op.v; else last.v.push(...op.v); }
+  else liveQ.push(op);
+  fastPollUntil = Date.now() + 2500;
+  clearTimeout(liveTimer); liveTimer = setTimeout(flushLive, 25);
+}
+async function flushLive() {
+  if (liveBusy) { liveTimer = setTimeout(flushLive, 30); return; }
+  liveBusy = true;
+  while (liveQ.length) {
+    const op = liveQ.shift();
+    const r = op.t === "keys"
+      ? await api("POST", "/api/remote/keys", { session: curSid, keys: op.v })
+      : await api("POST", "/api/remote/send", { session: curSid, text: op.v, enter: false, live: true, mode: op.t === "paste" ? "paste" : "type" });
+    if (!r.ok) { actMsg(r.error || "Gagal kirim", true); liveQ.length = 0; break; }
+  }
+  liveBusy = false; setTimeout(pollScreen, 120);
+}
+document.addEventListener("keydown", (e) => {
+  if (e.altKey && !e.ctrlKey && !e.metaKey && ["1", "2", "3"].includes(e.key)) {   // Alt+1/2/3 = ganti tab
+    e.preventDefault(); showTab(["trans", "chat", "term"][Number(e.key) - 1]); return;
+  }
+  if (e.isComposing || e.metaKey || e.altKey || !liveEligible()) return;
+  let k = null, text = null;
+  if (e.ctrlKey) {
+    const c = e.key.toLowerCase();
+    if (c === "v") return;                                              // tempel ditangani event paste
+    if (c === "c" && String(getSelection()).length) return;             // ada teks diseleksi = salin biasa
+    if (!LIVE_CTRL.has("ctrl+" + c)) return;
+    if (c === "c") {                                                    // Ctrl+C dua kali beruntun MENUTUP Claude
+      const now = Date.now();
+      if (now - lastCtrlC < 2000 && !confirm("Ctrl+C dua kali menutup Claude. Lanjut?")) { e.preventDefault(); lastCtrlC = 0; return; }
+      lastCtrlC = now;
+    }
+    k = "ctrl+" + c;
+  } else if (e.key === "Tab") k = e.shiftKey ? "shift+tab" : "tab";
+  else if (e.key === " ") k = "space";
+  else if (KMAP[e.key]) k = KMAP[e.key];
+  else if (e.key.length === 1) text = e.key;
+  else return;                                                          // 'Unidentified' (keyboard virtual) ditangani beforeinput
+  e.preventDefault();
+  enqueue(k ? { t: "keys", v: [k] } : { t: "text", v: text });
+}, true);
+document.addEventListener("paste", (e) => {
+  if (!liveEligible()) return;
+  const t = e.clipboardData && e.clipboardData.getData("text");
+  if (!t) return;
+  e.preventDefault(); enqueue({ t: "paste", v: t });
+});
+// keyboard virtual (HP): input tersembunyi menangkap teks; nilai direset ke penanda supaya Backspace selalu terdeteksi
+capEl.addEventListener("beforeinput", (e) => {
+  if (!liveEligible()) return;
+  const t = e.inputType;
+  if (t === "insertText" && e.data) enqueue({ t: "text", v: e.data });
+  else if (t === "deleteContentBackward") enqueue({ t: "keys", v: ["backspace"] });
+  else if (t === "insertLineBreak" || t === "insertParagraph") enqueue({ t: "keys", v: ["enter"] });
+  else if (t === "insertFromPaste" && e.data) enqueue({ t: "paste", v: e.data });
+  else return;   // insertCompositionText: ditunggu compositionend
+  e.preventDefault();
+});
+capEl.addEventListener("compositionend", (e) => { if (liveEligible() && e.data) enqueue({ t: "text", v: e.data }); capEl.value = SENT; });
+screenEl.addEventListener("click", () => {
+  if (matchMedia("(pointer: coarse)").matches) capEl.focus();   // HP: buka keyboard virtual
+  else screenEl.focus({ preventScroll: true });
+});
+$("rawform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = $("raw").value;
+  if (!t || !canControl()) return;
+  const r = await api("POST", "/api/remote/send", { session: curSid, text: t, enter: $("rawEnter").checked, mode: t.length > 40 || t.includes("\n") ? "paste" : "type" });
+  if (r.ok) $("raw").value = ""; else actMsg(r.error || "Gagal kirim", true);
+  setTimeout(pollScreen, 250);
+});
+$("raw").addEventListener("keydown", (e) => {   // Enter kirim, Shift+Enter baris baru (sama seperti chat)
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("rawform").requestSubmit(); }
+});
+
+// ---- tab ----
+function showTab(t) {
+  curTab = t; document.body.dataset.tab = t;
+  if (!PINNED) store.set("tab", t); else if (curSid) history.replaceState(null, "", sessionUrl(curSid, t));
+  document.querySelectorAll("#tabs [data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  $("pTrans").hidden = t !== "trans"; $("pChat").hidden = t !== "chat"; $("pTerm").hidden = t !== "term";
+  if (t === "chat") { chatEl.scrollTop = chatEl.scrollHeight; $("msg").focus(); }
+  if (t === "term") { pollScreen(); if (!matchMedia("(pointer: coarse)").matches) screenEl.focus({ preventScroll: true }); }
+}
+document.querySelectorAll("#tabs [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+syncChatToggles();
+showTab(["trans", "chat", "term"].includes(curTab) ? curTab : "trans");
+
+loadSessions();
+setInterval(loadSessions, 2500);
+</script>
+</body>
+</html>
