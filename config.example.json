@@ -1,4 +1,5 @@
 {
   "allowedHosts": [],
-  "sessionMinutes": 60
+  "sessionMinutes": 60,
+  "importSources": []
 }

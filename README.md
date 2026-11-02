@@ -52,12 +52,24 @@ dengan Clauseek = melanjutkan obrolan yang sama memakai DeepSeek (isi transkrip 
 Clauseek tampil di sini, folder `projects` dan `sessions` milik Clauseek harus berupa junction ke `~\.claude` (dibuat
 installer Clauseek). Tanpa `clauseek.cmd`, memilih Clauseek ditolak (tidak pernah jatuh diam-diam ke Claude).
 
-## PIN sementara per sesi (`/remote-control`)
-Perintah `/remote-control` di dalam chat (hook di Clauseek) meminta `POST /api/remote-control/enable` (hanya dari PC ini)
-dan menampilkan PIN 8 digit **sekali pakai** (default 10 menit, maks 60) beserta tautan sesi itu. Login dengan PIN ini
-hanya melihat/mengontrol **satu sesi**: daftar sesi, stream, layar, kirim teks/tombol, resize, dan Stop untuk sesi lain
-ditolak (403), dan Start/Resume/Fork dinonaktifkan. PIN utama (`setpin.py`) tidak terpengaruh dan tetap memberi akses penuh.
-Percobaan salah PIN sementara dihitung ke batas lockout yang sama.
+## PIN sementara per sesi (API)
+`POST /api/remote-control/enable {"session": "<id>", "minutes": 10}` (hanya diterima dari PC ini) membuat PIN 8 digit
+**sekali pakai** (default 10 menit, maks 60) yang hanya membuka **satu sesi**: daftar sesi, stream, layar, kirim
+teks/tombol, resize, dan Stop untuk sesi lain ditolak (403), dan Start/Resume/Fork dinonaktifkan. PIN utama
+(`setpin.py`) tidak terpengaruh. Percobaan salah PIN sementara dihitung ke batas lockout yang sama.
+(Perintah `/remote-control` milik Clauseek **tidak** memakai ini: ia punya halaman web mandiri per sesi.)
+
+## Impor transkrip dari mesin lain (mis. newdeepseek)
+Transkrip format Codex "rollout" (`<CODEX_HOME>\sessions\YYYY\MM\DD\rollout-*.jsonl`) bisa dipilih di daftar dan dilihat
+(label `⇩ <nama>`), lalu di-**Resume/Fork** dengan **Claude atau Clauseek**. Daftarkan sumbernya di `config.json` lokal:
+```json
+"importSources": [{ "name": "nama-sumber", "kind": "codex", "home": "<folder CODEX_HOME>" }]
+```
+Cara kerja: Resume/Fork mengonversi rollout menjadi sesi Claude Code baru di `projects\` (percakapan dimuat sebagai teks;
+panggilan tool dilipat jadi ringkasan; hanya giliran terakhir ±120 ribu karakter; injeksi sistem seperti AGENTS.md
+dibuang), lalu membuka sesi itu. *Resume* mengimpor **sekali** (id tetap; berikutnya melanjutkan hasil impor yang sudah
+berkembang), *Fork* selalu membuat salinan baru dari kondisi sumber saat ini. Sumber aslinya tidak diubah. Melanjutkan
+dengan **Claude** mengirim isi percakapan ke Anthropic (ada konfirmasi); dengan **Clauseek** ke DeepSeek.
 
 ## Operasional
 - Setelah mengubah file `*.py`: `Restart-Service ClaudeWatch` (tanpa UAC). `index.html` dibaca ulang di tiap request.
@@ -67,7 +79,7 @@ Percobaan salah PIN sementara dihitung ke batas lockout yang sama.
 ## Struktur
 `server.py` (HTTP/SSE) · `auth.py` (PIN + sesi) · `remote.py` (registry sesi, kontrol, audit) · `agent.py` + `consolectl.py`
 (proses di sesi login user yang menyuntik input ke console `claude.exe`) · `spawn.py` (membuka cmd di desktop user) ·
-`service.py` (service Windows) · `settings.py` · `setpin.py` · `index.html` (UI).
+`service.py` (service Windows) · `settings.py` · `setpin.py` · `importer.py` (impor transkrip Codex) · `index.html` (UI).
 
 ## Keamanan
 Mengontrol sesi berarti dapat menyuruh Claude menjalankan perintah di PC Anda. Jangan buka ke internet tanpa PIN kuat dan

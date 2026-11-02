@@ -366,7 +366,7 @@ async function loadSessions() {
       const o = document.createElement("option");
       o.value = s.sid;
       const age = s.age < 90 ? Math.round(s.age) + " dtk" : s.age < 5400 ? Math.round(s.age / 60) + " mnt" : (s.age / 3600).toFixed(1) + " jam";
-      const tag = (s.live ? `[● LIVE ${s.live.status || ""}] · ` : "") + (s.forked_from ? `[⑂ FORK dari ${s.forked_from.slice(0, 8)}] · ` : s.forks ? `[◆ ORI · ${s.forks} fork] · ` : "");
+      const tag = (s.source ? `[⇩ ${s.source}] · ` : "") + (s.live ? `[● LIVE ${s.live.status || ""}] · ` : "") + (s.forked_from ? `[⑂ FORK dari ${s.forked_from.slice(0, 8)}] · ` : s.forks ? `[◆ ORI · ${s.forks} fork] · ` : "");
       o.textContent = `${age} lalu · ${tag}${s.cwd || s.project} · ${s.title || "(tanpa judul)"} · #${s.sid.slice(0, 8)}`;
       return o;
     }));
@@ -385,7 +385,11 @@ function renderLineage() {
   const L = $("lineage"); L.replaceChildren();
   const s = sessions.find((x) => x.sid === curSid);
   if (!s) return;
-  if (s.forked_from) {
+  if (s.source) {
+    const t = el("span", "pill ori", "⇩ transkrip " + s.source + (s.forks ? " · " + s.forks + " impor" : ""));
+    t.title = "Transkrip dari " + s.source + " (bukan sesi Claude). Resume/Fork mengimpornya jadi sesi Claude Code, lalu melanjutkannya dengan Claude atau Clauseek.";
+    L.appendChild(t);
+  } else if (s.forked_from) {
     const p = sessions.find((x) => x.sid === s.forked_from);
     const b = el(p ? "button" : "span", "pill fork", "⑂ FORK dari " + s.forked_from.slice(0, 8) + (p ? " ↗" : " (di luar daftar)"));
     if (p) {
@@ -568,6 +572,9 @@ async function spawnSession(mode, opts = {}) {
   const inPlace = !!opts.inPlace;
   const sid = inPlace ? curSid : $("sel").value, s = sessions.find((x) => x.sid === sid);
   if (!sid) return;
+  const provider = $("provider").value === "clauseek" ? "clauseek" : "claude";
+  if (s && s.source && provider === "claude" &&
+      !confirm("Ini transkrip dari " + s.source + ".\nMelanjutkannya dengan CLAUDE akan MENGIRIM isi percakapan itu ke Anthropic (tagihan akun Claude).\nPilih Clauseek (DeepSeek) bila tidak ingin begitu.\n\nOK = tetap pakai Claude, Batal = jangan.")) return;
   if (mode === "resume" && s && s.live &&
       !confirm("Sesi ini SEDANG BERJALAN di terminal lain (pid " + s.live.pid + ").\nResume ke sesi yang sama akan bentrok (dua proses menulis transkrip yang sama). Pakai Fork, atau kontrol sesi itu lewat tab Chat.\n\nOK = tetap Resume, Batal = jangan.")) return;
   if (mode === "resume" && s && !s.live && s.age < 120 &&
@@ -581,14 +588,16 @@ async function spawnSession(mode, opts = {}) {
   let ok = false, target = null;
   try {
     const pre = await fetch("/api/live").then((x) => x.json()).catch(() => ({ live: {}, now: Date.now() / 1000 }));
-    const provider = $("provider").value === "clauseek" ? "clauseek" : "claude";
     say("Memulai " + (mode === "fork" ? "fork" : "resume") + " dengan " + (provider === "clauseek" ? "Clauseek (DeepSeek)" : "Claude") + "…");
     const r = await fetch("/api/resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: sid, mode, provider, autoTrust: $("autoTrust").checked }) });
     if (r.status === 401) { location.reload(); return; }
     const d = await r.json().catch(() => ({}));
     if (r.ok && d.ok) {
       ok = true; say((mode === "fork" ? "Fork" : "Resume") + " dibuka di PC (" + d.cwd + ") · menunggu proses terdaftar…" + (d.autoTrust ? " auto-trust aktif." : ""));
-      target = await waitNewSession(sid, mode, new Set(Object.keys(pre.live)), pre.now, d.cwd);
+      // sumber impor: server sudah membuat sesi Claude baru (importedSid) -> tunggu proses itu, bukan id sumber
+      const eff = d.importedSid || sid, effMode = d.importedSid ? "resume" : mode;
+      if (d.importedSid) say("Diimpor" + (d.kept ? " (" + d.kept + " dari " + d.total + " giliran terakhir)" : " (memakai hasil impor sebelumnya)") + " → sesi Claude #" + d.importedSid.slice(0, 8) + " · menunggu proses terdaftar…");
+      target = await waitNewSession(eff, effMode, new Set(Object.keys(pre.live)), pre.now, d.cwd);
       say(target ? "Sesi hidup." : "Proses claude belum terdaftar (mungkin menunggu dialog di jendela cmd di PC). Coba lagi atau cek PC.", !target);
     } else say(d.error || "Gagal (" + r.status + ")", true);
   } catch (e) { say("Gagal menghubungi server", true); }
@@ -651,11 +660,22 @@ let chatErr = { text: "", until: 0 };
 function renderLive() {
   const L = liveInfo(), chip = $("liveChip");
   if (!curSid) { chip.textContent = "…"; chip.className = "pill live-off"; }
-  else if (!L) { chip.textContent = "○ tidak berjalan"; chip.className = "pill live-off"; chip.title = "Tidak ada proses claude hidup untuk sesi ini. Pakai Resume/Fork untuk membukanya."; }
+  else if (!L) {
+    const cs = sessions.find((x) => x.sid === curSid);
+    chip.textContent = cs && cs.source ? "⇩ transkrip " + cs.source : "○ tidak berjalan"; chip.className = "pill live-off";
+    chip.title = "Tidak ada proses claude hidup untuk sesi ini. Pakai Resume/Fork untuk membukanya.";
+  }
   else if (!L.controllable) { chip.textContent = "● LIVE (" + L.entrypoint + ") · tidak bisa dikontrol"; chip.className = "pill live-na"; }
   else { chip.textContent = "● LIVE · " + (L.status || "?") + " · pid " + L.pid; chip.className = "pill " + (L.status === "busy" ? "live-busy" : "live-on"); chip.title = "Proses claude hidup, bisa dikontrol"; }
   const show = !!curSid && !L;                      // sesi tidak hidup: ganti layar dengan panel Start
   $("startBox").hidden = !show; $("screen").hidden = show;
+  if (show && renderLive.lastSid !== curSid) {      // pesan bawaan panel Start hanya diganti saat pindah sesi (jangan hapus pesan galat)
+    renderLive.lastSid = curSid;
+    const cs = sessions.find((x) => x.sid === curSid);
+    setStartMsg(cs && cs.source
+      ? "Ini transkrip dari " + cs.source + ", bukan sesi Claude. Resume = impor jadi sesi Claude (sekali; berikutnya melanjutkan hasil impor). Fork = impor salinan baru. Hanya giliran terakhir yang dimuat, output tool diringkas."
+      : "Sesi ini tidak sedang berjalan.");
+  }
   if (!show) applyFitSoon(600);
   renderComposer();
 }

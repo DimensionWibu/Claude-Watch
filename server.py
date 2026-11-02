@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from http.cookies import SimpleCookie
 
 import auth
+import importer
 import remote
 import settings
 
@@ -264,6 +265,54 @@ class Tracker:
         return out[-limit:] if limit else out
 
 
+class RolloutTracker(Tracker):
+    """Pembaca transkrip format Codex "rollout" (sumber impor, mis. newdeepseek). Hanya-baca; formatnya beda dari
+    transkrip Claude, jadi hanya _handle yang diganti — pembacaan inkremental, ring buffer, dan ringkasan dipakai bersama."""
+
+    def _handle(self, j):
+        t = j.get("type")
+        p = j.get("payload") if isinstance(j.get("payload"), dict) else {}
+        if t in ("session_meta", "turn_context"):
+            self.cwd = self.cwd or p.get("cwd")
+            if t == "turn_context":
+                self.model = p.get("model") or self.model
+            return
+        ts = parse_ts(j.get("timestamp", ""))
+        if ts is None or t not in ("response_item", "event_msg"):
+            return
+        gap = None if self.prev_ts is None else max(0.0, ts - self.prev_ts)
+        pt = p.get("type")
+        if t == "event_msg":
+            if pt == "task_started":
+                self.state = {"kind": "waiting_model", "detail": "giliran dimulai"}
+            elif pt == "task_complete":
+                self.last_turn_ms = p.get("duration_ms")
+                self.state = {"kind": "idle", "detail": "menunggu input"}
+                self.prev_ts = self.last_event_ts = ts
+                self._emit(ts, "system", gap=gap, text=f"turn selesai · {round((p.get('duration_ms') or 0) / 1000, 1)} dtk")
+            return
+        self.prev_ts = self.last_event_ts = ts
+        if pt == "message":
+            txt = importer._text(p.get("content"))
+            if not txt.strip():
+                return
+            if p.get("role") == "user":
+                if not importer._is_injected(txt):
+                    self._emit(ts, "user", gap=gap, text=clip(txt))
+                    self.state = {"kind": "waiting_model", "detail": "prompt user"}
+            elif p.get("role") == "assistant":
+                self._emit(ts, "text", gap=gap, text=clip(txt))
+        elif pt == "function_call":
+            self._emit(ts, "tool_use", gap=gap, tool=p.get("name"), text=clip(p.get("arguments")))
+            self.state = {"kind": "running_tool", "detail": p.get("name") or ""}
+        elif pt == "function_call_output":
+            out = p.get("output")
+            self._emit(ts, "tool_result", gap=gap, text=clip(out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)))
+            self.state = {"kind": "waiting_model", "detail": "tool selesai"}
+        elif pt == "reasoning":
+            self._emit(ts, "thinking", gap=gap, text="(reasoning tersembunyi)")
+
+
 class Registry:
     def __init__(self):
         self.lock = threading.Lock()
@@ -292,6 +341,10 @@ class Registry:
         items = items[:60]
         for it in items:
             it["title"], it["cwd"], it["forked_from"] = self._meta(it["path"], it["mtime"])
+        try:
+            items.extend(importer.list_items())    # sesi dari sumber impor (config.json -> importSources), format Codex
+        except Exception:
+            pass
         kids = {}
         for it in items:
             if it["forked_from"]:
@@ -359,7 +412,9 @@ class Registry:
                 with self.lock:
                     tr = self.trackers.get(it["path"])
                     if not tr:
-                        tr = Tracker(it["path"], sid)
+                        tr = (RolloutTracker if it.get("source") else Tracker)(it["path"], sid)
+                        if it.get("source"):
+                            tr.title = it.get("title")
                         self.trackers[it["path"]] = tr
                 return tr
         return None
@@ -602,14 +657,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             import spawn
             t_spawn = time.time()
-            info = spawn.spawn_resume(sid, item.get("cwd"), mode == "fork", provider)
+            run_sid, run_fork, extra = sid, mode == "fork", {}
+            if item.get("source"):
+                # sesi sumber impor (Codex rollout): ubah dulu jadi sesi Claude Code, lalu Resume hasilnya
+                run_sid, _cwd, created, ii = importer.import_session(item, mode == "fork")
+                run_fork = False        # salinan sudah dibuat oleh impor; tak perlu --fork-session lagi
+                extra = {"importedSid": run_sid, "imported": created, **ii}
+                remote.audit(self._client_ip(), "import", sid, f"-> {run_sid} mode={mode} baru={created} sumber={item['source']}")
+            info = spawn.spawn_resume(run_sid, item.get("cwd"), run_fork, provider)
         except Exception as e:
             return self._send(500, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         remote.audit(self._client_ip(), "spawn", sid, f"mode={mode} provider={provider}")
         auto = body.get("autoTrust", True) is not False
         if auto:   # jawab dialog "trust this folder" di jendela baru (hanya bila foldernya = folder kerja sesi)
-            remote.auto_trust_async(item.get("cwd"), t_spawn, self._client_ip(), sid)
-        return self._send(200, json.dumps({"ok": True, "autoTrust": auto, **info}, ensure_ascii=False))
+            remote.auto_trust_async(item.get("cwd"), t_spawn, self._client_ip(), run_sid)
+        return self._send(200, json.dumps({"ok": True, "autoTrust": auto, **info, **extra}, ensure_ascii=False))
 
     def do_GET(self):
         if not self._host_ok():

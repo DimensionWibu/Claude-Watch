@@ -1,4 +1,4 @@
-# ALLOWLIST: semua diabaikan kecuali yang dibuka eksplisit di bawah. File baru HARUS didaftarkan di sini
+﻿# ALLOWLIST: semua diabaikan kecuali yang dibuka eksplisit di bawah. File baru HARUS didaftarkan di sini
 # DAN di ALLOWED_FILES pada scripts/check-repo.py (lihat REPO-RULES.md). Jangan melonggarkan aturan ini.
 *
 !.gitignore
@@ -8,6 +8,7 @@
 !agent.py
 !auth.py
 !consolectl.py
+!importer.py
 !index.html
 !install.ps1
 !uninstall.ps1

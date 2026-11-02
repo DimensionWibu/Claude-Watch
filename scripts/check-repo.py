@@ -1,4 +1,4 @@
-"""Penjaga repo: hanya source code + panduan install. Gagal (exit 1) bila ada file di luar daftar putih atau
+﻿"""Penjaga repo: hanya source code + panduan install. Gagal (exit 1) bila ada file di luar daftar putih atau
 konten sensitif. Pakai:  python scripts/check-repo.py --staged   (hook pre-commit)
                          python scripts/check-repo.py --all      (CI / audit seluruh file terlacak)
 Opsional: berkas lokal `.repo-deny.local` (TIDAK ikut repo) berisi kata/string pribadi yang dilarang, satu per baris
@@ -11,7 +11,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALLOWED_FILES = {
     ".gitignore", "README.md", "REPO-RULES.md", "config.example.json",
-    "agent.py", "auth.py", "consolectl.py", "index.html", "install.ps1", "uninstall.ps1",
+    "agent.py", "auth.py", "consolectl.py", "importer.py", "index.html", "install.ps1", "uninstall.ps1",
     "remote.py", "server.py", "service.py", "settings.py", "setpin.py", "spawn.py",
     "scripts/check-repo.py", ".githooks/pre-commit", ".github/workflows/repo-guard.yml",
 }
