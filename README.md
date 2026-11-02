@@ -45,6 +45,20 @@ Trafik yang membawa header proxy dianggap bukan lokal, jadi selalu kena PIN.
 - Sesi yang tidak berjalan menampilkan panel **Start** (Resume atau Fork). Tombol **Stop** menutup proses sesi.
 - Tautan langsung ke satu sesi: `/?s=<session-id>&tab=chat`.
 
+## Pilih program: Claude atau Clauseek
+Di bilah atas ada pilihan program untuk **Resume/Fork**: *Claude* (Claude Code asli) atau *Clauseek* (engine Claude Code
+yang sama, tetapi seluruh request dialihkan ke DeepSeek lewat launcher `clauseek.cmd` di `~\.local\bin`). Fork sesi Claude
+dengan Clauseek = melanjutkan obrolan yang sama memakai DeepSeek (isi transkrip ikut dikirim ke DeepSeek). Agar sesi
+Clauseek tampil di sini, folder `projects` dan `sessions` milik Clauseek harus berupa junction ke `~\.claude` (dibuat
+installer Clauseek). Tanpa `clauseek.cmd`, memilih Clauseek ditolak (tidak pernah jatuh diam-diam ke Claude).
+
+## PIN sementara per sesi (`/remote-control`)
+Perintah `/remote-control` di dalam chat (hook di Clauseek) meminta `POST /api/remote-control/enable` (hanya dari PC ini)
+dan menampilkan PIN 8 digit **sekali pakai** (default 10 menit, maks 60) beserta tautan sesi itu. Login dengan PIN ini
+hanya melihat/mengontrol **satu sesi**: daftar sesi, stream, layar, kirim teks/tombol, resize, dan Stop untuk sesi lain
+ditolak (403), dan Start/Resume/Fork dinonaktifkan. PIN utama (`setpin.py`) tidak terpengaruh dan tetap memberi akses penuh.
+Percobaan salah PIN sementara dihitung ke batas lockout yang sama.
+
 ## Operasional
 - Setelah mengubah file `*.py`: `Restart-Service ClaudeWatch` (tanpa UAC). `index.html` dibaca ulang di tiap request.
 - Log: `service.log`, audit aksi remote: `remote-audit.log` (tidak berisi isi ketikan).

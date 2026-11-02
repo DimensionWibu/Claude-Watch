@@ -22,6 +22,8 @@ GLOBAL_MAX_FAILS, GLOBAL_LOCK = 20, 600
 
 _lock = threading.Lock()
 _sessions = {}        # token -> expiry (epoch)
+_scopes = {}          # token -> session id Claude (bila login pakai PIN sementara /remote-control); tanpa entri = akses penuh
+_temp = {}            # session id -> (pin, expiry): PIN sekali pakai yang hanya membuka SATU sesi chat
 _ip_fails = {}        # ip -> [ts]
 _ip_locked = {}       # ip -> until
 _global_fails = []
@@ -75,27 +77,66 @@ def set_pin(pin):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def check_pin(ip, pin):
-    """-> (ok, pesan, retry_detik). Semua percobaan dihitung terhadap IP dan batas global."""
+TEMP_PIN_MAX_MIN = 60
+
+
+def create_temp_pin(sid, minutes=10):
+    """PIN 8 digit acak, SEKALI PAKAI, hanya membuka sesi `sid` (dipakai perintah /remote-control di chat).
+    Satu PIN aktif per sesi (membuat ulang = mengganti). -> (pin, detik berlaku)."""
+    secs = max(1, min(int(minutes), TEMP_PIN_MAX_MIN)) * 60
+    pin = "".join(secrets.choice("0123456789") for _ in range(8))
+    with _lock:
+        now = time.time()
+        for s in [s for s, (_, e) in _temp.items() if e < now]:
+            del _temp[s]
+        _temp[sid] = (pin, now + secs)
+    return pin, secs
+
+
+def _take_temp(pin):
+    """sid bila `pin` cocok dengan PIN sementara yang masih aktif (langsung dihabiskan), selain itu None."""
+    if not isinstance(pin, str) or not 1 <= len(pin) <= 64:
+        return None
+    now, found = time.time(), None
+    with _lock:
+        for sid, (p, e) in list(_temp.items()):
+            if e < now:
+                del _temp[sid]
+            elif hmac.compare_digest(pin.encode("utf-8"), p.encode("utf-8")):
+                found = sid
+        if found:
+            del _temp[found]
+    return found
+
+
+def check_login(ip, pin):
+    """-> (ok, pesan, retry_detik, scope). scope = sid bila yang dipakai PIN sementara, None bila PIN utama.
+    Semua percobaan (PIN utama maupun sementara) dihitung terhadap IP dan batas global yang sama."""
     now = time.time()
     global _global_locked
     with _lock:
         if now < _global_locked:
-            return False, "Login dikunci sementara karena terlalu banyak percobaan salah.", int(_global_locked - now)
+            return False, "Login dikunci sementara karena terlalu banyak percobaan salah.", int(_global_locked - now), None
         if now < _ip_locked.get(ip, 0):
-            return False, "Terlalu banyak percobaan salah. Coba lagi nanti.", int(_ip_locked[ip] - now)
-    if not pin_configured():
-        return False, "PIN belum diset di server (jalankan setpin.py).", 0
-    p = _cfg()["pin"]
-    try:
-        ok = isinstance(pin, str) and 1 <= len(pin) <= 64 and hmac.compare_digest(
-            _derive(pin, p["salt"], int(p.get("iters", ITERS))), str(p["hash"]))
-    except (ValueError, TypeError):
-        ok = False
+            return False, "Terlalu banyak percobaan salah. Coba lagi nanti.", int(_ip_locked[ip] - now), None
+        has_temp = bool(_temp)
+    if not pin_configured() and not has_temp:
+        return False, "PIN belum diset di server (jalankan setpin.py).", 0, None
+    ok, scope = False, None
+    if pin_configured():
+        p = _cfg()["pin"]
+        try:
+            ok = isinstance(pin, str) and 1 <= len(pin) <= 64 and hmac.compare_digest(
+                _derive(pin, p["salt"], int(p.get("iters", ITERS))), str(p["hash"]))
+        except (ValueError, TypeError):
+            ok = False
+    if not ok:
+        scope = _take_temp(pin)
+        ok = scope is not None
     with _lock:
         if ok:
             _ip_fails.pop(ip, None)
-            return True, "", 0
+            return True, "", 0, scope
         fl = [t for t in _ip_fails.get(ip, []) if now - t < IP_WINDOW] + [now]
         _ip_fails[ip] = fl
         _global_fails[:] = [t for t in _global_fails if now - t < IP_WINDOW] + [now]
@@ -103,18 +144,32 @@ def check_pin(ip, pin):
             _global_locked = now + GLOBAL_LOCK
         if len(fl) >= IP_MAX_FAILS:
             _ip_locked[ip] = now + IP_LOCK
-            return False, "PIN salah. Percobaan habis, dikunci 15 menit.", IP_LOCK
-        return False, f"PIN salah. Sisa percobaan: {IP_MAX_FAILS - len(fl)}.", 0
+            return False, "PIN salah. Percobaan habis, dikunci 15 menit.", IP_LOCK, None
+        return False, f"PIN salah. Sisa percobaan: {IP_MAX_FAILS - len(fl)}.", 0, None
 
 
-def new_session(seconds=None):
+def check_pin(ip, pin):
+    """-> (ok, pesan, retry_detik); versi lama tanpa scope."""
+    return check_login(ip, pin)[:3]
+
+
+def new_session(seconds=None, scope=None):
     token = secrets.token_urlsafe(32)
     with _lock:
         now = time.time()
         for t in [t for t, e in _sessions.items() if e < now]:
             del _sessions[t]
+            _scopes.pop(t, None)
         _sessions[token] = now + (seconds or session_seconds())
+        if scope:
+            _scopes[token] = scope
     return token
+
+
+def scope_of(token):
+    """sid yang dibatasi untuk token ini, atau None (akses penuh / token tidak valid)."""
+    with _lock:
+        return _scopes.get(token) if _sessions.get(token, 0) > time.time() else None
 
 
 def remaining(token):
@@ -132,6 +187,7 @@ def remaining(token):
 def drop(token):
     with _lock:
         _sessions.pop(token, None)
+        _scopes.pop(token, None)
 
 
 LOGIN_HTML = """<!doctype html>

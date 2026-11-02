@@ -14,10 +14,15 @@ SID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 SYSTEM_CMD = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe")
 
 
-def build_cmdline(claude_exe, sid, fork):
+PROVIDERS = ("claude", "clauseek")
+
+
+def build_cmdline(claude_exe, sid, fork, provider="claude"):
     if not SID_RE.match(sid):
         raise ValueError("session id tidak valid")
-    title = f"Claude {'fork' if fork else 'resume'} {sid[:8]}"
+    if provider not in PROVIDERS:
+        raise ValueError("provider tidak valid")
+    title = f"{'Clauseek' if provider == 'clauseek' else 'Claude'} {'fork' if fork else 'resume'} {sid[:8]}"
     tail = f"--resume {sid}" + (" --fork-session" if fork else "")
     return f'"{SYSTEM_CMD}" /d /c start "{title}" "{SYSTEM_CMD}" /k ""{claude_exe}" {tail}"'
 
@@ -30,7 +35,14 @@ def _in_session0():
         return False
 
 
-def _find_claude(profile_dir):
+def _find_claude(profile_dir, provider="claude"):
+    if provider == "clauseek":
+        # clauseek = engine Claude Code yang seluruh request-nya ke DeepSeek (launcher .cmd terpasang di ~\.local\bin).
+        # Sengaja tanpa fallback ke claude.exe: gagal lebih baik daripada diam-diam tertagih ke akun Claude.
+        p = os.path.join(profile_dir, ".local", "bin", "clauseek.cmd")
+        if not os.path.isfile(p):
+            raise RuntimeError("clauseek belum terpasang di PC ini (tidak ada clauseek.cmd di .local\\bin)")
+        return p
     for p in (os.path.join(profile_dir, ".local", "bin", "claude.exe"),
               os.path.join(profile_dir, "AppData", "Roaming", "npm", "claude.cmd")):
         if os.path.isfile(p):
@@ -75,17 +87,20 @@ def spawn_agent(script, workdir):
     return pid
 
 
-def spawn_resume(sid, cwd, fork):
-    """Mengembalikan dict info. Raise RuntimeError dengan pesan ramah bila gagal."""
+def spawn_resume(sid, cwd, fork, provider="claude"):
+    """Mengembalikan dict info. Raise RuntimeError dengan pesan ramah bila gagal.
+    provider: 'claude' (Claude asli) atau 'clauseek' (engine yang sama, request ke DeepSeek)."""
+    if provider not in PROVIDERS:
+        raise RuntimeError("provider tidak dikenal")
     if not cwd or not os.path.isdir(cwd):
         raise RuntimeError(f"folder kerja sesi tidak ada: {cwd!r} (resume harus dari folder proyek aslinya)")
 
     if not _in_session0():
         # dijalankan langsung sebagai user biasa (mode dev): cukup buat console baru
-        exe = _find_claude(os.path.expanduser("~"))
-        cmdline = build_cmdline(exe, sid, fork)
+        exe = _find_claude(os.path.expanduser("~"), provider)
+        cmdline = build_cmdline(exe, sid, fork, provider)
         subprocess.Popen(cmdline, cwd=cwd, creationflags=subprocess.CREATE_NO_WINDOW)
-        return {"mode": "user", "cwd": cwd}
+        return {"mode": "user", "cwd": cwd, "provider": provider}
 
     import win32con
     import win32process
@@ -101,7 +116,11 @@ def spawn_resume(sid, cwd, fork):
         raise RuntimeError(f"gagal ambil token user sesi {sess}: {e}")
     env = win32profile.CreateEnvironmentBlock(token, False)
     profile = win32profile.GetUserProfileDirectory(token)
-    cmdline = build_cmdline(_find_claude(profile), sid, fork)
+    try:
+        cmdline = build_cmdline(_find_claude(profile, provider), sid, fork, provider)
+    except Exception:
+        token.Close()
+        raise
     si = win32process.STARTUPINFO()
     si.lpDesktop = "winsta0\\default"
     flags = win32con.CREATE_UNICODE_ENVIRONMENT | win32con.CREATE_NO_WINDOW
@@ -110,4 +129,4 @@ def spawn_resume(sid, cwd, fork):
     hproc.Close()
     hthread.Close()
     token.Close()
-    return {"mode": "session", "session": sess, "launcherPid": pid, "cwd": cwd}
+    return {"mode": "session", "session": sess, "launcherPid": pid, "cwd": cwd, "provider": provider}

@@ -455,6 +455,38 @@ class Handler(BaseHTTPRequestHandler):
         """Klien dari PC ini (loopback tanpa header proxy) bebas; sisanya (LAN/tunnel) wajib cookie sesi PIN yang masih berlaku."""
         return self._is_local_client() or auth.remaining(self._session_token()) > 0
 
+    def _scope(self):
+        """sid yang membatasi klien ini (login dgn PIN sementara /remote-control), atau None = akses penuh. PC ini selalu penuh."""
+        if self._is_local_client():
+            return None
+        return auth.scope_of(self._session_token())
+
+    def _handle_rc_enable(self):
+        """POST /api/remote-control/enable {session, minutes?} -> PIN sekali pakai untuk SATU sesi. Hanya dari PC ini
+        (dipanggil perintah /remote-control di chat clauseek/claude), bukan dari LAN/tunnel."""
+        if not self._is_local_client() or not self._same_origin_ok():
+            return self._json_err(403, "hanya dari PC ini")
+        body = self._read_json(2000)
+        if body is None:
+            return
+        sid = str(body.get("session", ""))
+        if not ID_RE.match(sid):
+            return self._json_err(400, "session id tidak valid")
+        info = remote.live_sessions(max_age=0.3).get(sid)
+        if not info:
+            return self._json_err(409, "sesi ini tidak terdaftar sebagai proses claude yang hidup (mode -p / sudah ditutup?)")
+        if not info["controllable"]:
+            return self._json_err(409, f"sesi berjalan lewat '{info.get('entrypoint')}', bukan terminal CLI: tidak bisa dikontrol")
+        try:
+            minutes = int(body.get("minutes", 10))
+        except (TypeError, ValueError):
+            minutes = 10
+        pin, secs = auth.create_temp_pin(sid, minutes)
+        remote.audit(self._client_ip(), "rc-enable", sid, f"PIN sementara dibuat, berlaku {secs // 60} mnt, sekali pakai")
+        return self._send(200, json.dumps({"ok": True, "pin": pin, "expires": secs, "port": PORT,
+                                           "hosts": sorted(extra_hosts()),
+                                           "path": f"/?s={sid}&tab=chat"}))
+
     def _is_https(self):
         return (self.headers.get("X-Forwarded-Proto", "") == "https") or ('"scheme":"https"' in (self.headers.get("CF-Visitor") or "").replace(" ", ""))
 
@@ -472,14 +504,14 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return
         ip = self._client_ip()
-        ok, msg, retry = auth.check_pin(ip, str(body.get("pin", "")))
+        ok, msg, retry, scope = auth.check_login(ip, str(body.get("pin", "")))
         if not ok:
             remote.audit(ip, "login-gagal", "-", msg)
             code = 429 if retry else 401
             return self._send(code, json.dumps({"ok": False, "error": msg, "retry": retry}, ensure_ascii=False),
                               extra={"Retry-After": str(retry)} if retry else None)
-        token = auth.new_session()
-        remote.audit(ip, "login-ok", "-", f"sesi {auth.session_seconds() // 60} mnt")
+        token = auth.new_session(scope=scope)
+        remote.audit(ip, "login-ok", scope or "-", f"sesi {auth.session_seconds() // 60} mnt" + (" (PIN sementara, 1 sesi)" if scope else ""))
         cookie = f"cw_session={token}; Path=/; Max-Age={auth.session_seconds()}; HttpOnly; SameSite=Strict" + ("; Secure" if self._is_https() else "")
         return self._send(200, json.dumps({"ok": True, "expires": auth.session_seconds()}), extra={"Set-Cookie": cookie})
 
@@ -524,6 +556,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": True}), extra={"Set-Cookie": "cw_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"})
         if not self._authed():
             return self._json_err(401, "login diperlukan")
+        scope = self._scope()
+        if u.path == "/api/remote-control/enable":
+            return self._handle_rc_enable()
         if u.path in ("/api/remote/send", "/api/remote/keys", "/api/remote/stop", "/api/remote/resize"):
             if not self._remote_auth():
                 return
@@ -531,6 +566,8 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return
             sid = str(body.get("session", ""))
+            if scope and sid != scope:
+                return self._json_err(403, "login ini hanya untuk satu sesi")
             ip = self._client_ip()
             if u.path.endswith("/resize"):
                 try:
@@ -548,13 +585,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._remote_call(remote.send_keys, sid, body.get("keys"), ip)
         if u.path != "/api/resume":
             return self._send(404, "not found", "text/plain")
+        if scope:
+            return self._json_err(403, "login PIN sementara tidak boleh membuka sesi baru")
         if not self._same_origin_ok():
             return self._json_err(403, "permintaan ditolak")
         body = self._read_json(4096)
         if body is None:
             return
         sid, mode = str(body.get("session", "")), body.get("mode")
-        if mode not in ("resume", "fork") or not ID_RE.match(sid):
+        provider = body.get("provider", "claude")
+        if mode not in ("resume", "fork") or not ID_RE.match(sid) or provider not in ("claude", "clauseek"):
             return self._send(400, json.dumps({"ok": False, "error": "parameter tidak valid"}))
         item = next((i for i in REG.list_sessions(max_age=0) if i["sid"] == sid), None)
         if not item:
@@ -562,9 +602,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             import spawn
             t_spawn = time.time()
-            info = spawn.spawn_resume(sid, item.get("cwd"), mode == "fork")
+            info = spawn.spawn_resume(sid, item.get("cwd"), mode == "fork", provider)
         except Exception as e:
             return self._send(500, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
+        remote.audit(self._client_ip(), "spawn", sid, f"mode={mode} provider={provider}")
         auto = body.get("autoTrust", True) is not False
         if auto:   # jawab dialog "trust this folder" di jendela baru (hanya bila foldernya = folder kerja sesi)
             remote.auto_trust_async(item.get("cwd"), t_spawn, self._client_ip(), sid)
@@ -585,32 +626,38 @@ class Handler(BaseHTTPRequestHandler):
             with open(os.path.join(HERE, "index.html"), "rb") as f:
                 return self._send(200, f.read(), "text/html; charset=utf-8",
                                   {"Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"})
+        scope = self._scope()      # login PIN sementara: hanya boleh melihat/mengontrol satu sesi
         if u.path == "/api/sessions":
             now = time.time()
             data = [{k: v for k, v in it.items() if k != "path"} | {"age": now - it["mtime"], "live": remote.live_public(it["sid"])}
-                    for it in REG.list_sessions()]
+                    for it in REG.list_sessions() if not scope or it["sid"] == scope]
             return self._send(200, json.dumps({"sessions": data, "now": now}))
         if u.path == "/api/capabilities":
             local = self._is_local_client()
-            return self._send(200, json.dumps({"spawn": True, "auth": {
+            return self._send(200, json.dumps({"spawn": not scope, "scope": scope, "providers": ["claude", "clauseek"], "auth": {
                 "required": not local, "remaining": None if local else auth.remaining(self._session_token())}}))
         if u.path == "/api/live":
-            lv = {sid: remote.live_public(sid) for sid in remote.live_sessions(max_age=0.5)}
+            lv = {sid: remote.live_public(sid) for sid in remote.live_sessions(max_age=0.5) if not scope or sid == scope}
             return self._send(200, json.dumps({"live": lv, "now": time.time()}))
         if u.path == "/api/remote/screen":
             if not self._remote_auth():
                 return
-            return self._remote_call(remote.read_screen, (q.get("session") or [""])[0])
+            want = (q.get("session") or [""])[0]
+            if scope and want != scope:
+                return self._json_err(403, "login ini hanya untuk satu sesi")
+            return self._remote_call(remote.read_screen, want)
         if u.path == "/api/health":
             return self._send(200, json.dumps({"ok": True, "uptime": time.time() - REG.started}))
         if u.path == "/api/stream":
-            return self._stream(q)
+            return self._stream(q, scope)
         self._send(404, "not found", "text/plain")
 
-    def _stream(self, q):
+    def _stream(self, q, scope=None):
         sid = (q.get("session") or [""])[0]
         if not ID_RE.match(sid):
             return self._send(400, "bad session", "text/plain")
+        if scope and sid != scope:
+            return self._send(403, "login ini hanya untuk satu sesi", "text/plain")
         tr = REG.tracker_for(sid)
         if not tr:
             return self._send(404, "session tidak ditemukan", "text/plain")

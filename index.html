@@ -190,6 +190,7 @@ button.act.warn { background: var(--warn); color: #fff; }
   <span class="actions">
     <button type="button" id="bResume" class="act" title="Buka cmd baru: claude --resume (melanjutkan sesi yang sama)">▶ Resume</button>
     <button type="button" id="bFork" class="act" title="Buka cmd baru: claude --resume --fork-session (salinan sesi baru)">⑂ Fork</button>
+    <select id="provider" class="act" aria-label="Program untuk Resume/Fork" title="Program yang dibuka untuk Resume/Fork. Claude = Claude asli (tagihan akun Claude). Clauseek = engine Claude Code yang sama tetapi semua request ke DeepSeek (tagihan DeepSeek). Fork dari sesi Claude ke Clauseek = lanjut obrolan yang sama memakai DeepSeek."><option value="claude">Claude</option><option value="clauseek">Clauseek (DeepSeek)</option></select>
     <label class="chk" title="Setelah Resume/Fork, otomatis jawab dialog 'trust this folder' di jendela cmd (hanya bila folder di dialog sama dengan folder kerja sesi)"><input type="checkbox" id="autoTrust" checked> auto-trust</label>
     <button type="button" id="bStop" class="act danger" title="Tutup proses claude sesi ini (transkrip tetap tersimpan; bisa di-Resume lagi)" disabled>⏻ Stop</button>
     <button type="button" id="bNew" class="act" title="Buka sesi ini langsung di tab browser baru (langsung ke Chat)">↗ Tab baru</button>
@@ -543,7 +544,8 @@ function loadCaps() {
   return fetch("/api/capabilities").then((r) => { if (r.status === 401) { location.reload(); return null; } return r.json(); }).then((c) => {
     if (!c) return;
     canSpawn = !!c.spawn;
-    for (const id of ["bResume", "bFork"]) { $(id).disabled = !canSpawn; if (!canSpawn) $(id).title = "Tidak tersedia"; }
+    for (const id of ["bResume", "bFork", "provider"]) { $(id).disabled = !canSpawn; if (!canSpawn) $(id).title = "Tidak tersedia"; }
+    $("provider").value = store.get("provider", "claude") === "clauseek" ? "clauseek" : "claude";
     authExp = c.auth && c.auth.required && c.auth.remaining ? Date.now() + c.auth.remaining * 1000 : null;
     renderAuth();
   }).catch(() => {});
@@ -579,8 +581,9 @@ async function spawnSession(mode, opts = {}) {
   let ok = false, target = null;
   try {
     const pre = await fetch("/api/live").then((x) => x.json()).catch(() => ({ live: {}, now: Date.now() / 1000 }));
-    say("Memulai " + (mode === "fork" ? "fork" : "resume") + "…");
-    const r = await fetch("/api/resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: sid, mode, autoTrust: $("autoTrust").checked }) });
+    const provider = $("provider").value === "clauseek" ? "clauseek" : "claude";
+    say("Memulai " + (mode === "fork" ? "fork" : "resume") + " dengan " + (provider === "clauseek" ? "Clauseek (DeepSeek)" : "Claude") + "…");
+    const r = await fetch("/api/resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session: sid, mode, provider, autoTrust: $("autoTrust").checked }) });
     if (r.status === 401) { location.reload(); return; }
     const d = await r.json().catch(() => ({}));
     if (r.ok && d.ok) {
@@ -598,7 +601,9 @@ async function spawnSession(mode, opts = {}) {
   } else if (w && !w.closed) { if (ok) w.location.href = sessionUrl(target || sid, "chat"); else w.close(); }
   spawning(false);
 }
+$("provider").addEventListener("change", () => store.set("provider", $("provider").value));
 function spawning(on) {
+  $("provider").disabled = on || !canSpawn;
   $("bResume").disabled = $("bFork").disabled = on || !canSpawn;
   $("sResume").disabled = $("sFork").disabled = on || !canSpawn;
 }

@@ -406,7 +406,7 @@ def _cmdline(pid):
         return ""
 
 
-_OUR_CMD = re.compile(r'cmd(\.exe)?"?\s+/k\s+""[^"]*claude(\.exe)?"\s+--resume\s', re.I)
+_OUR_CMD = re.compile(r'cmd(\.exe)?"?\s+/k\s+""[^"]*(claude(\.exe)?|clauseek\.cmd)"\s+--resume\s', re.I)
 
 
 def stop_session(sid, ip, force=False):
